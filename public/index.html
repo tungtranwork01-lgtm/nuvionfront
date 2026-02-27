@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BTCJPY Dashboard</title>
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0a0e17;
+      color: #d1d4dc;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow-x: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: #131722;
+      border-bottom: 1px solid #1e222d;
+      flex-shrink: 0;
+    }
+
+    .header-left { display: flex; align-items: center; gap: 14px; }
+    .pair-name { font-size: 18px; font-weight: 700; color: #fff; }
+    .price-info { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+    .current-price { font-size: 16px; font-weight: 600; }
+    .price-up { color: #26a69a; }
+    .price-down { color: #ef5350; }
+    .price-detail { color: #787b86; }
+    .price-detail span { margin-left: 3px; }
+    .controls { display: flex; gap: 6px; align-items: center; }
+
+    .btn {
+      padding: 4px 10px;
+      border: 1px solid #2a2e39;
+      background: transparent;
+      color: #787b86;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    .btn:hover { background: #2a2e39; color: #d1d4dc; }
+    .btn.active { background: #2962ff; color: #fff; border-color: #2962ff; }
+
+    .main-layout {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .left-panel {
+      width: 50%;
+      display: flex;
+      flex-direction: column;
+      border-right: 2px solid #1e222d;
+      overflow-y: auto;
+    }
+
+    .right-panel {
+      width: 50%;
+      overflow-y: auto;
+      padding: 12px 16px;
+      background: #0d1117;
+    }
+
+    .chart-section {
+      position: relative;
+      border-bottom: 1px solid #1e222d;
+      flex-shrink: 0;
+    }
+
+    .chart-label {
+      position: absolute;
+      top: 4px; left: 8px;
+      z-index: 10;
+      font-size: 10px; font-weight: 600; color: #787b86;
+      background: rgba(19, 23, 34, 0.85);
+      padding: 2px 6px; border-radius: 3px;
+    }
+
+    .macd-cell {
+      position: relative;
+      border-bottom: 1px solid #1e222d;
+      flex-shrink: 0;
+    }
+
+    /* ===== RIGHT PANEL ===== */
+    .stats-section { margin-bottom: 14px; }
+    .stats-title {
+      font-size: 12px; font-weight: 700; color: #d1d4dc;
+      padding: 6px 10px;
+      background: #161b22;
+      border: 1px solid #1e222d;
+      border-bottom: none;
+      border-radius: 6px 6px 0 0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .stats-body {
+      background: #131722;
+      border: 1px solid #1e222d;
+      border-radius: 0 0 6px 6px;
+      padding: 10px;
+    }
+
+
+    /* TF Table */
+    .tf-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .tf-table th {
+      text-align: left; padding: 5px 6px; color: #787b86;
+      font-weight: 600; border-bottom: 1px solid #1e222d;
+      font-size: 10px; text-transform: uppercase;
+    }
+    .tf-table td { padding: 5px 6px; border-bottom: 1px solid #1a1e2a; }
+    .tf-table tr:last-child td { border-bottom: none; }
+    .tf-name { font-weight: 600; color: #d1d4dc; }
+
+    .badge {
+      display: inline-block; padding: 1px 6px;
+      border-radius: 3px; font-size: 10px; font-weight: 600;
+    }
+    .badge-bull { background: rgba(38,166,154,0.15); color: #26a69a; }
+    .badge-bear { background: rgba(239,83,80,0.15); color: #ef5350; }
+    .badge-neutral { background: rgba(120,123,134,0.15); color: #787b86; }
+
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .stat-card {
+      background: #161b22; border-radius: 5px;
+      padding: 8px 10px; border: 1px solid #1e222d;
+    }
+    .stat-label { font-size: 10px; color: #787b86; text-transform: uppercase; }
+    .stat-value { font-size: 14px; font-weight: 600; color: #d1d4dc; margin-top: 2px; }
+
+    .momentum-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+    .momentum-tf { width: 28px; font-size: 11px; font-weight: 600; color: #787b86; }
+    .momentum-bars { flex: 1; display: flex; gap: 1px; height: 18px; align-items: flex-end; }
+    .momentum-bar { flex: 1; min-width: 2px; border-radius: 1px 1px 0 0; }
+    .momentum-val { width: 55px; text-align: right; font-size: 11px; font-weight: 600; }
+
+    .loading-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(10, 14, 23, 0.95);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 1000; transition: opacity 0.3s;
+    }
+    .loading-overlay.hidden { opacity: 0; pointer-events: none; }
+    .spinner { width: 36px; height: 36px; border: 3px solid #2a2e39; border-top-color: #2962ff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { margin-top: 12px; color: #787b86; font-size: 13px; }
+
+    .error-banner { padding: 8px 16px; background: #3c1f1f; color: #ef5350; font-size: 12px; display: none; flex-shrink: 0; }
+
+    .status-bar {
+      padding: 4px 16px; background: #131722; border-top: 1px solid #1e222d;
+      font-size: 10px; color: #787b86; display: flex; justify-content: space-between; flex-shrink: 0;
+    }
+
+    .right-panel::-webkit-scrollbar { width: 6px; }
+    .right-panel::-webkit-scrollbar-track { background: #0d1117; }
+    .right-panel::-webkit-scrollbar-thumb { background: #2a2e39; border-radius: 3px; }
+    .left-panel::-webkit-scrollbar { width: 4px; }
+    .left-panel::-webkit-scrollbar-track { background: #131722; }
+    .left-panel::-webkit-scrollbar-thumb { background: #2a2e39; border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-text">Đang tải dữ liệu BTCJPY...</div>
+</div>
+<div class="error-banner" id="errorBanner"></div>
+
+<div class="header">
+  <div class="header-left">
+    <div class="pair-name">BTC/JPY</div>
+    <div class="price-info">
+      <span class="current-price" id="currentPrice">--</span>
+      <span class="price-detail">O <span id="infoOpen">--</span></span>
+      <span class="price-detail">H <span id="infoHigh">--</span></span>
+      <span class="price-detail">L <span id="infoLow">--</span></span>
+      <span class="price-detail">C <span id="infoClose">--</span></span>
+      <span class="price-detail">Vol <span id="infoVol">--</span></span>
+    </div>
+  </div>
+  <div class="controls">
+    <button class="btn active" data-limit="200">200</button>
+    <button class="btn" data-limit="500">500</button>
+    <button class="btn" data-limit="1000">1000</button>
+    <button class="btn" data-limit="2000">2000</button>
+    <button class="btn" data-limit="10000">10000</button>
+    <button class="btn" id="refreshBtn" title="Làm mới">&#8635; Refresh</button>
+  </div>
+</div>
+
+<div class="main-layout">
+
+  <div class="left-panel" id="leftPanel">
+      <div class="chart-section" id="mainChartContainer">
+        <div class="chart-label">OHLC + Volume</div>
+        <div id="mainChart"></div>
+      </div>
+      <div class="macd-cell" id="macd5mContainer">
+        <div class="chart-label">MACD 5m</div>
+        <div id="macd5mChart"></div>
+      </div>
+      <div class="macd-cell" id="macd1hContainer">
+        <div class="chart-label">MACD 1h</div>
+        <div id="macd1hChart"></div>
+      </div>
+      <div class="macd-cell" id="macd4hContainer">
+        <div class="chart-label">MACD 4h</div>
+        <div id="macd4hChart"></div>
+      </div>
+      <div class="macd-cell" id="macd1dContainer">
+        <div class="chart-label">MACD 1d</div>
+        <div id="macd1dChart"></div>
+      </div>
+    </div>
+
+    <div class="right-panel" id="rightPanel">
+
+      <!-- MACD Table -->
+      <div class="stats-section">
+        <div class="stats-title">MACD theo từng Timeframe</div>
+        <div class="stats-body">
+          <table class="tf-table">
+            <thead><tr><th>TF</th><th>MACD</th><th>Signal</th><th>Hist</th><th>Xu hướng</th><th>Momentum</th></tr></thead>
+            <tbody id="tfTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Momentum Visual -->
+      <div class="stats-section">
+        <div class="stats-title">Histogram Momentum (20 nến gần nhất)</div>
+        <div class="stats-body" id="momentumPanel"></div>
+      </div>
+
+      <!-- Price Stats -->
+      <div class="stats-section">
+        <div class="stats-title">Thống kê giá</div>
+        <div class="stats-body"><div class="stat-grid" id="priceStatsGrid"></div></div>
+      </div>
+
+      <!-- Cross Signals -->
+      <div class="stats-section">
+        <div class="stats-title">Tín hiệu giao cắt MACD gần nhất</div>
+        <div class="stats-body" id="crossSignals"></div>
+      </div>
+
+    </div>
+
+</div>
+
+<div class="status-bar">
+  <span id="dataCount">--</span>
+  <span id="lastUpdate">--</span>
+</div>
+
+<script>
+const { createChart, ColorType, CrosshairMode } = LightweightCharts;
+
+const chartTheme = {
+  layout: { background: { type: ColorType.Solid, color: '#131722' }, textColor: '#787b86' },
+  grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+  crosshair: { mode: CrosshairMode.Normal },
+  timeScale: { borderColor: '#1e222d', timeVisible: true, secondsVisible: false },
+  rightPriceScale: { borderColor: '#1e222d' },
+};
+
+let mainChart, candleSeries, volumeSeries;
+let macdCharts = {}, macdLineSeries = {}, macdSignalSeries = {}, macdHistSeries = {};
+let currentLimit = 200;
+let rawData = [];
+
+function getChartWidth() { return document.getElementById('leftPanel').clientWidth; }
+function getMainChartHeight() { return Math.max(280, (window.innerHeight - 52) * 0.42); }
+function getMacdChartHeight() { return Math.max(90, (window.innerHeight - 52) * 0.13); }
+
+function initMainChart() {
+  mainChart = createChart(document.getElementById('mainChart'), {
+    ...chartTheme, width: getChartWidth(), height: getMainChartHeight(),
+    localization: { priceFormatter: p => p.toLocaleString('ja-JP', { maximumFractionDigits: 0 }) },
+  });
+  candleSeries = mainChart.addCandlestickSeries({
+    upColor: '#26a69a', downColor: '#ef5350',
+    borderDownColor: '#ef5350', borderUpColor: '#26a69a',
+    wickDownColor: '#ef5350', wickUpColor: '#26a69a',
+  });
+  volumeSeries = mainChart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'volume' });
+  mainChart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+}
+
+function initMacdChart(id, container) {
+  macdCharts[id] = createChart(container, {
+    ...chartTheme, width: getChartWidth(), height: getMacdChartHeight(),
+    localization: { priceFormatter: p => p.toFixed(2) },
+  });
+  macdLineSeries[id] = macdCharts[id].addLineSeries({ color: '#2962ff', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
+  macdSignalSeries[id] = macdCharts[id].addLineSeries({ color: '#ff6d00', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
+  macdHistSeries[id] = macdCharts[id].addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
+}
+
+function toTimestamp(d) { return Math.floor(new Date(d).getTime() / 1000); }
+function fmt(n, d = 0) { return (n == null || isNaN(n)) ? '--' : Number(n).toLocaleString('ja-JP', { maximumFractionDigits: d }); }
+function fmtSigned(n, d = 2) { if (n == null || isNaN(n)) return '--'; const v = Number(n); return (v >= 0 ? '+' : '') + v.toFixed(d); }
+
+// ==========================================
+//  STATS
+// ==========================================
+
+function computeStats(data) {
+  if (!data || data.length < 2) return;
+  const last = data[data.length - 1];
+  const tfs = ['5m', '1h', '4h', '1d'];
+
+  // MACD per-TF table
+  const tbody = document.getElementById('tfTableBody');
+  tbody.innerHTML = tfs.map(tf => {
+    const m = Number(last[`macd_${tf}`]);
+    const s = Number(last[`signal_${tf}`]);
+    const h = Number(last[`hist_${tf}`]);
+    let prevH = data.length >= 2 ? Number(data[data.length - 2][`hist_${tf}`]) || 0 : 0;
+    const trend = h > 0 ? 'Bullish' : h < 0 ? 'Bearish' : 'Neutral';
+    const trendClass = h > 0 ? 'badge-bull' : h < 0 ? 'badge-bear' : 'badge-neutral';
+    const momentum = Math.abs(h) > Math.abs(prevH) ? 'Tăng tốc' : 'Giảm tốc';
+    const momClass = Math.abs(h) > Math.abs(prevH) ? (h >= 0 ? 'badge-bull' : 'badge-bear') : 'badge-neutral';
+    return `<tr>
+      <td class="tf-name">${tf.toUpperCase()}</td>
+      <td style="color:${m >= 0 ? '#26a69a' : '#ef5350'}">${fmtSigned(m)}</td>
+      <td style="color:${s >= 0 ? '#26a69a' : '#ef5350'}">${fmtSigned(s)}</td>
+      <td style="color:${h >= 0 ? '#26a69a' : '#ef5350'};font-weight:600">${fmtSigned(h)}</td>
+      <td><span class="badge ${trendClass}">${trend}</span></td>
+      <td><span class="badge ${momClass}">${momentum}</span></td>
+    </tr>`;
+  }).join('');
+
+  // Momentum visual
+  const momPanel = document.getElementById('momentumPanel');
+  momPanel.innerHTML = tfs.map(tf => {
+    const slice = data.slice(-20);
+    const vals = slice.map(r => Number(r[`hist_${tf}`]) || 0);
+    const maxAbs = Math.max(...vals.map(Math.abs), 0.01);
+    const bars = vals.map(v => {
+      const pct = (Math.abs(v) / maxAbs) * 100;
+      return `<div class="momentum-bar" style="height:${Math.max(pct, 4)}%;background:${v >= 0 ? '#26a69a' : '#ef5350'}"></div>`;
+    }).join('');
+    const lastV = vals[vals.length - 1];
+    return `<div class="momentum-row">
+      <span class="momentum-tf">${tf.toUpperCase()}</span>
+      <div class="momentum-bars">${bars}</div>
+      <span class="momentum-val" style="color:${lastV >= 0 ? '#26a69a' : '#ef5350'}">${fmtSigned(lastV)}</span>
+    </div>`;
+  }).join('');
+
+  // Price Stats
+  const closes = data.map(r => Number(r.close)).filter(v => !isNaN(v));
+  const highs = data.map(r => Number(r.high)).filter(v => !isNaN(v));
+  const lows = data.map(r => Number(r.low)).filter(v => !isNaN(v));
+  const vols = data.map(r => Number(r.volume)).filter(v => !isNaN(v));
+  const curPrice = closes[closes.length - 1];
+  const periodHigh = Math.max(...highs);
+  const periodLow = Math.min(...lows);
+  const priceRange = periodHigh - periodLow;
+  const rangePos = priceRange > 0 ? ((curPrice - periodLow) / priceRange * 100).toFixed(1) : 0;
+  const avgVol = vols.length > 0 ? vols.reduce((a, b) => a + b, 0) / vols.length : 0;
+  const lastVol = vols[vols.length - 1] || 0;
+  const volRatio = avgVol > 0 ? (lastVol / avgVol).toFixed(2) : '--';
+  const returns = [];
+  for (let i = 1; i < closes.length; i++) returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+  const vol = returns.length > 0 ? Math.sqrt(returns.reduce((s, r) => s + r * r, 0) / returns.length) * 100 : 0;
+  const change = closes.length >= 2 ? curPrice - closes[0] : 0;
+  const changePct = closes.length >= 2 ? (change / closes[0]) * 100 : 0;
+
+  document.getElementById('priceStatsGrid').innerHTML = [
+    { label: 'Cao nhất (kỳ)', value: fmt(periodHigh), color: '#26a69a' },
+    { label: 'Thấp nhất (kỳ)', value: fmt(periodLow), color: '#ef5350' },
+    { label: 'Vị trí trong range', value: rangePos + '%', color: '#d1d4dc' },
+    { label: 'Biên độ range', value: fmt(priceRange), color: '#787b86' },
+    { label: 'Thay đổi (kỳ)', value: (change >= 0 ? '+' : '') + fmt(change) + ` (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%)`, color: change >= 0 ? '#26a69a' : '#ef5350' },
+    { label: 'Volatility (σ)', value: vol.toFixed(3) + '%', color: '#d1d4dc' },
+    { label: 'Volume TB', value: fmt(avgVol, 2), color: '#787b86' },
+    { label: 'Vol hiện tại / TB', value: volRatio + 'x', color: Number(volRatio) > 1.5 ? '#ff6d00' : '#d1d4dc' },
+  ].map(s => `<div class="stat-card"><div class="stat-label">${s.label}</div><div class="stat-value" style="color:${s.color}">${s.value}</div></div>`).join('');
+
+  // Cross signals
+  const crossEl = document.getElementById('crossSignals');
+  const crosses = [];
+  tfs.forEach(tf => {
+    for (let i = data.length - 1; i >= 1 && i >= data.length - 200; i--) {
+      const cM = Number(data[i][`macd_${tf}`]), cS = Number(data[i][`signal_${tf}`]);
+      const pM = Number(data[i - 1][`macd_${tf}`]), pS = Number(data[i - 1][`signal_${tf}`]);
+      if (isNaN(cM) || isNaN(cS) || isNaN(pM) || isNaN(pS)) continue;
+      const bull = pM <= pS && cM > cS, bear = pM >= pS && cM < cS;
+      if (bull || bear) {
+        crosses.push({ tf, type: bull ? 'bull' : 'bear', barsAgo: data.length - 1 - i, time: data[i].open_time });
+        break;
+      }
+    }
+  });
+  crossEl.innerHTML = crosses.length === 0
+    ? '<div style="color:#787b86;font-size:11px;padding:4px">Không tìm thấy tín hiệu giao cắt trong 200 nến gần nhất</div>'
+    : '<table class="tf-table"><thead><tr><th>TF</th><th>Loại</th><th>Cách đây</th><th>Thời gian</th></tr></thead><tbody>'
+      + crosses.map(c => {
+        const t = new Date(c.time).toLocaleString('vi-VN', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+        return `<tr><td class="tf-name">${c.tf.toUpperCase()}</td><td><span class="badge ${c.type === 'bull' ? 'badge-bull' : 'badge-bear'}">${c.type === 'bull' ? 'Bullish Cross' : 'Bearish Cross'}</span></td><td>${c.barsAgo} nến</td><td style="color:#787b86">${t}</td></tr>`;
+      }).join('') + '</tbody></table>';
+}
+
+// ==========================================
+//  CHART DATA
+// ==========================================
+
+function updateCharts(data) {
+  rawData = data;
+  const candles = [], volumes = [];
+  const macd = { '5m': [], '1h': [], '4h': [], '1d': [] };
+  const macdSignal = { '5m': [], '1h': [], '4h': [], '1d': [] };
+  const macdHist = { '5m': [], '1h': [], '4h': [], '1d': [] };
+
+  for (const row of data) {
+    if (!row.open_time) continue;
+    const time = toTimestamp(row.open_time);
+    candles.push({ time, open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close) });
+    const v = Number(row.volume) || 0;
+    const up = Number(row.close) >= Number(row.open);
+    volumes.push({ time, value: v, color: up ? 'rgba(38,166,154,0.4)' : 'rgba(239,83,80,0.4)' });
+    ['5m', '1h', '4h', '1d'].forEach(tf => {
+      const m = Number(row[`macd_${tf}`]), s = Number(row[`signal_${tf}`]), h = Number(row[`hist_${tf}`]);
+      if (!isNaN(m)) macd[tf].push({ time, value: m });
+      if (!isNaN(s)) macdSignal[tf].push({ time, value: s });
+      if (!isNaN(h)) macdHist[tf].push({ time, value: h, color: h >= 0 ? 'rgba(38,166,154,0.7)' : 'rgba(239,83,80,0.7)' });
+    });
+  }
+
+  candleSeries.setData(candles);
+  volumeSeries.setData(volumes);
+  ['5m', '1h', '4h', '1d'].forEach(tf => {
+    macdLineSeries[tf].setData(macd[tf]);
+    macdSignalSeries[tf].setData(macdSignal[tf]);
+    macdHistSeries[tf].setData(macdHist[tf]);
+  });
+
+  if (data.length > 0) {
+    const last = data[data.length - 1];
+    const up = Number(last.close) >= Number(last.open);
+    const el = document.getElementById('currentPrice');
+    el.textContent = fmt(last.close); el.className = 'current-price ' + (up ? 'price-up' : 'price-down');
+    document.getElementById('infoOpen').textContent = fmt(last.open);
+    document.getElementById('infoHigh').textContent = fmt(last.high);
+    document.getElementById('infoLow').textContent = fmt(last.low);
+    document.getElementById('infoClose').textContent = fmt(last.close);
+    document.getElementById('infoVol').textContent = fmt(last.volume);
+  }
+
+  document.getElementById('dataCount').textContent = `${data.length} nến được tải`;
+  document.getElementById('lastUpdate').textContent = `Cập nhật: ${new Date().toLocaleString('vi-VN')}`;
+  computeStats(data);
+}
+
+function setupTimeScaleSync() {
+  const all = [mainChart, ...Object.values(macdCharts)];
+  let syncing = false;
+  all.forEach(src => {
+    src.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (syncing || !range) return;
+      syncing = true;
+      all.forEach(t => { if (t !== src) t.timeScale().setVisibleLogicalRange(range); });
+      syncing = false;
+    });
+  });
+}
+
+function setupCrosshairInfoUpdate() {
+  mainChart.subscribeCrosshairMove(param => {
+    if (!param.time || !param.seriesData) return;
+    const cd = param.seriesData.get(candleSeries), vd = param.seriesData.get(volumeSeries);
+    if (cd) {
+      const up = cd.close >= cd.open;
+      const el = document.getElementById('currentPrice');
+      el.textContent = fmt(cd.close); el.className = 'current-price ' + (up ? 'price-up' : 'price-down');
+      document.getElementById('infoOpen').textContent = fmt(cd.open);
+      document.getElementById('infoHigh').textContent = fmt(cd.high);
+      document.getElementById('infoLow').textContent = fmt(cd.low);
+      document.getElementById('infoClose').textContent = fmt(cd.close);
+    }
+    if (vd) document.getElementById('infoVol').textContent = fmt(vd.value);
+  });
+}
+
+async function fetchData(limit) {
+  const res = await fetch(`/api/btcjpy/latest?limit=${limit}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function loadData() {
+  document.getElementById('loading').classList.remove('hidden');
+  document.getElementById('errorBanner').style.display = 'none';
+  try {
+    const result = await fetchData(currentLimit);
+    updateCharts(result.data);
+    mainChart.timeScale().fitContent();
+    Object.values(macdCharts).forEach(c => c.timeScale().fitContent());
+  } catch (err) {
+    console.error(err);
+    document.getElementById('errorBanner').textContent = `Lỗi tải dữ liệu: ${err.message}`;
+    document.getElementById('errorBanner').style.display = 'block';
+  } finally {
+    document.getElementById('loading').classList.add('hidden');
+  }
+}
+
+function handleResize() {
+  const w = getChartWidth();
+  mainChart.applyOptions({ width: w, height: getMainChartHeight() });
+  Object.values(macdCharts).forEach(c => c.applyOptions({ width: w, height: getMacdChartHeight() }));
+}
+
+// ==========================================
+//  INIT
+// ==========================================
+
+function init() {
+  initMainChart();
+  ['5m', '1h', '4h', '1d'].forEach(id => initMacdChart(id, document.getElementById(`macd${id.replace('m','m').replace('h','h').replace('d','d')}Chart`)));
+
+  setupTimeScaleSync();
+  setupCrosshairInfoUpdate();
+
+  document.querySelectorAll('.btn[data-limit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.btn[data-limit]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentLimit = parseInt(btn.dataset.limit);
+      loadData();
+    });
+  });
+
+  document.getElementById('refreshBtn').addEventListener('click', loadData);
+  window.addEventListener('resize', handleResize);
+  loadData();
+}
+
+init();
+</script>
+</body>
+</html>
