@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BTCJPY Dashboard</title>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdn.plot.ly/plotly-gl3d-2.27.0.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -196,10 +197,10 @@
     </div>
   </div>
   <div class="controls">
-    <button class="btn active" data-limit="200">200</button>
+    <button class="btn" data-limit="200">200</button>
     <button class="btn" data-limit="500">500</button>
     <button class="btn" data-limit="1000">1000</button>
-    <button class="btn" data-limit="2000">2000</button>
+    <button class="btn active" data-limit="2000">2000</button>
     <button class="btn" data-limit="10000">10000</button>
     <button class="btn" id="refreshBtn" title="Làm mới">&#8635; Refresh</button>
   </div>
@@ -243,12 +244,6 @@
         </div>
       </div>
 
-      <!-- Momentum Visual -->
-      <div class="stats-section">
-        <div class="stats-title">Histogram Momentum (20 nến gần nhất)</div>
-        <div class="stats-body" id="momentumPanel"></div>
-      </div>
-
       <!-- Price Stats -->
       <div class="stats-section">
         <div class="stats-title">Thống kê giá</div>
@@ -259,6 +254,16 @@
       <div class="stats-section">
         <div class="stats-title">Tín hiệu giao cắt MACD gần nhất</div>
         <div class="stats-body" id="crossSignals"></div>
+      </div>
+
+      <!-- 3D MACD Histogram -->
+      <div class="stats-section">
+        <div class="stats-title">MACD Histogram 3D (200 nến gần nhất)
+          <button class="btn" id="replayBtn" style="padding:2px 8px;font-size:11px">&#9654; Replay</button>
+        </div>
+        <div class="stats-body" style="padding:0;overflow:hidden;border-radius:0 0 6px 6px">
+          <div id="hist3dChart" style="width:100%;height:400px"></div>
+        </div>
       </div>
 
     </div>
@@ -283,8 +288,9 @@ const chartTheme = {
 
 let mainChart, candleSeries, volumeSeries;
 let macdCharts = {}, macdLineSeries = {}, macdSignalSeries = {}, macdHistSeries = {};
-let currentLimit = 200;
+let currentLimit = 2000;
 let rawData = [];
+let replayTimer = null;
 
 function getChartWidth() { return document.getElementById('leftPanel').clientWidth; }
 function getMainChartHeight() { return Math.max(280, (window.innerHeight - 52) * 0.42); }
@@ -319,6 +325,141 @@ function fmt(n, d = 0) { return (n == null || isNaN(n)) ? '--' : Number(n).toLoc
 function fmtSigned(n, d = 2) { if (n == null || isNaN(n)) return '--'; const v = Number(n); return (v >= 0 ? '+' : '') + v.toFixed(d); }
 
 // ==========================================
+//  3D HISTOGRAM
+// ==========================================
+
+function update3DChart(data, sliceOverride) {
+  const slice = sliceOverride || data.slice(-200);
+  const tfs = ['5m', '1h', '4h', '1d'];
+
+  const zSurface = [];
+  const colorSurface = [];
+
+  tfs.forEach((tf) => {
+    const zRow = [], cRow = [];
+    let prev = 0;
+    for (let xi = 0; xi < slice.length; xi++) {
+      const h = Number(slice[xi][`hist_${tf}`]) || 0;
+      let cv;
+      if (h >= 0) { cv = h >= prev ? 1 : 0.4; }
+      else { cv = h <= prev ? -1 : -0.4; }
+      zRow.push(h);
+      cRow.push(cv);
+      prev = h;
+    }
+    zSurface.push(zRow);
+    colorSurface.push(cRow);
+  });
+
+  const mx = [], my = [], mz = [], mc = [];
+  tfs.forEach((tf, ti) => {
+    let prev = 0;
+    for (let xi = 0; xi < slice.length; xi++) {
+      const h = Number(slice[xi][`hist_${tf}`]) || 0;
+      let color;
+      if (h >= 0) { color = h >= prev ? '#26a69a' : '#a8dbd5'; }
+      else { color = h <= prev ? '#ef5350' : '#f0a8a6'; }
+      prev = h;
+      mx.push(xi); my.push(ti); mz.push(h); mc.push(color);
+    }
+  });
+
+  const traces = [
+    {
+      type: 'surface',
+      z: zSurface,
+      surfacecolor: colorSurface,
+      x: Array.from({ length: slice.length }, (_, i) => i),
+      y: [0, 1, 2, 3],
+      colorscale: [
+        [0, '#ef5350'],
+        [0.25, '#f0a8a6'],
+        [0.5, '#2a2e39'],
+        [0.75, '#a8dbd5'],
+        [1, '#26a69a'],
+      ],
+      cmin: -1, cmax: 1,
+      showscale: false,
+      opacity: 0.78,
+      hoverinfo: 'z',
+      lighting: { ambient: 0.9, diffuse: 0.3, specular: 0.15, roughness: 0.6 },
+      contours: {
+        x: { show: true, color: 'rgba(255,255,255,0.05)', width: 1 },
+        y: { show: true, color: 'rgba(255,255,255,0.08)', width: 1 },
+        z: { show: false },
+      },
+    },
+    {
+      type: 'scatter3d',
+      mode: 'markers',
+      x: mx, y: my, z: mz,
+      marker: { size: 2.5, color: mc, opacity: 0.95 },
+      showlegend: false,
+      hoverinfo: 'z',
+    },
+  ];
+
+  const layout = {
+    paper_bgcolor: '#131722',
+    margin: { l: 0, r: 0, t: 0, b: 0 },
+    scene: {
+      bgcolor: '#0d1117',
+      xaxis: {
+        title: { text: 'Time', font: { color: '#e0e3eb', size: 11 } },
+        color: '#e0e3eb', tickfont: { color: '#b0b4bc', size: 10 },
+        gridcolor: '#2a2e39', zerolinecolor: '#2a2e39',
+        showticklabels: false,
+      },
+      yaxis: {
+        title: { text: '', font: { color: '#e0e3eb' } },
+        color: '#e0e3eb', tickfont: { color: '#e0e3eb', size: 11 },
+        gridcolor: '#2a2e39', zerolinecolor: '#2a2e39',
+        tickvals: [0, 1, 2, 3], ticktext: ['5M', '1H', '4H', '1D'],
+      },
+      zaxis: {
+        title: { text: 'Histogram', font: { color: '#e0e3eb', size: 11 } },
+        color: '#e0e3eb', tickfont: { color: '#b0b4bc', size: 10 },
+        gridcolor: '#2a2e39', zerolinecolor: '#555',
+      },
+      camera: { eye: { x: 1.6, y: -1.8, z: 0.9 } },
+    },
+    font: { color: '#e0e3eb', size: 11 },
+  };
+
+  Plotly.react('hist3dChart', traces, layout, { responsive: true, displayModeBar: false });
+}
+
+function toggleReplay() {
+  const btn = document.getElementById('replayBtn');
+  if (replayTimer) {
+    clearInterval(replayTimer);
+    replayTimer = null;
+    btn.innerHTML = '&#9654; Replay';
+    update3DChart(rawData);
+    return;
+  }
+  const allData = rawData;
+  const totalLen = allData.length;
+  const windowSize = 200;
+  let endPos = windowSize;
+  btn.innerHTML = '&#9724; Dừng';
+  update3DChart(rawData, allData.slice(0, endPos));
+
+  replayTimer = setInterval(() => {
+    endPos += 5;
+    if (endPos >= totalLen) {
+      clearInterval(replayTimer);
+      replayTimer = null;
+      btn.innerHTML = '&#9654; Replay';
+      update3DChart(rawData);
+      return;
+    }
+    const startPos = Math.max(0, endPos - windowSize);
+    update3DChart(rawData, allData.slice(startPos, endPos));
+  }, 1000);
+}
+
+// ==========================================
 //  STATS
 // ==========================================
 
@@ -348,23 +489,7 @@ function computeStats(data) {
     </tr>`;
   }).join('');
 
-  // Momentum visual
-  const momPanel = document.getElementById('momentumPanel');
-  momPanel.innerHTML = tfs.map(tf => {
-    const slice = data.slice(-20);
-    const vals = slice.map(r => Number(r[`hist_${tf}`]) || 0);
-    const maxAbs = Math.max(...vals.map(Math.abs), 0.01);
-    const bars = vals.map(v => {
-      const pct = (Math.abs(v) / maxAbs) * 100;
-      return `<div class="momentum-bar" style="height:${Math.max(pct, 4)}%;background:${v >= 0 ? '#26a69a' : '#ef5350'}"></div>`;
-    }).join('');
-    const lastV = vals[vals.length - 1];
-    return `<div class="momentum-row">
-      <span class="momentum-tf">${tf.toUpperCase()}</span>
-      <div class="momentum-bars">${bars}</div>
-      <span class="momentum-val" style="color:${lastV >= 0 ? '#26a69a' : '#ef5350'}">${fmtSigned(lastV)}</span>
-    </div>`;
-  }).join('');
+  update3DChart(data);
 
   // Price Stats
   const closes = data.map(r => Number(r.close)).filter(v => !isNaN(v));
@@ -431,6 +556,8 @@ function updateCharts(data) {
   const macdSignal = { '5m': [], '1h': [], '4h': [], '1d': [] };
   const macdHist = { '5m': [], '1h': [], '4h': [], '1d': [] };
 
+  const prevHist = { '5m': 0, '1h': 0, '4h': 0, '1d': 0 };
+
   for (const row of data) {
     if (!row.open_time) continue;
     const time = toTimestamp(row.open_time);
@@ -442,7 +569,16 @@ function updateCharts(data) {
       const m = Number(row[`macd_${tf}`]), s = Number(row[`signal_${tf}`]), h = Number(row[`hist_${tf}`]);
       if (!isNaN(m)) macd[tf].push({ time, value: m });
       if (!isNaN(s)) macdSignal[tf].push({ time, value: s });
-      if (!isNaN(h)) macdHist[tf].push({ time, value: h, color: h >= 0 ? 'rgba(38,166,154,0.7)' : 'rgba(239,83,80,0.7)' });
+      if (!isNaN(h)) {
+        let color;
+        if (h >= 0) {
+          color = h >= prevHist[tf] ? '#26a69a' : '#a8dbd5';
+        } else {
+          color = h <= prevHist[tf] ? '#ef5350' : '#f0a8a6';
+        }
+        macdHist[tf].push({ time, value: h, color });
+        prevHist[tf] = h;
+      }
     });
   }
 
@@ -551,6 +687,7 @@ function init() {
   });
 
   document.getElementById('refreshBtn').addEventListener('click', loadData);
+  document.getElementById('replayBtn').addEventListener('click', toggleReplay);
   window.addEventListener('resize', handleResize);
   loadData();
 }
