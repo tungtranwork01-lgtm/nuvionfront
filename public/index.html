@@ -233,36 +233,21 @@
 
     <div class="right-panel" id="rightPanel">
 
-      <!-- MACD Table -->
-      <div class="stats-section">
-        <div class="stats-title">MACD theo từng Timeframe</div>
-        <div class="stats-body">
-          <table class="tf-table">
-            <thead><tr><th>TF</th><th>MACD</th><th>Signal</th><th>Hist</th><th>Xu hướng</th><th>Momentum</th></tr></thead>
-            <tbody id="tfTableBody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Price Stats -->
-      <div class="stats-section">
-        <div class="stats-title">Thống kê giá</div>
-        <div class="stats-body"><div class="stat-grid" id="priceStatsGrid"></div></div>
-      </div>
-
-      <!-- Cross Signals -->
-      <div class="stats-section">
-        <div class="stats-title">Tín hiệu giao cắt MACD gần nhất</div>
-        <div class="stats-body" id="crossSignals"></div>
-      </div>
-
-      <!-- 3D MACD Histogram -->
+      <!-- 3D MACD Histogram (top) -->
       <div class="stats-section">
         <div class="stats-title">MACD Histogram 3D (200 nến gần nhất)
           <button class="btn" id="replayBtn" style="padding:2px 8px;font-size:11px">&#9654; Replay</button>
         </div>
         <div class="stats-body" style="padding:0;overflow:hidden;border-radius:0 0 6px 6px">
-          <div id="hist3dChart" style="width:100%;height:400px"></div>
+          <div id="hist3dChart" style="width:100%;height:520px"></div>
+        </div>
+      </div>
+
+      <!-- Thống kê số miền Histogram MACD dương (toàn bộ tập dữ liệu) -->
+      <div class="stats-section">
+        <div class="stats-title">Số miền Histogram MACD dương</div>
+        <div class="stats-body">
+          <div id="histPositiveRegionsStat" style="font-size:12px;color:#d1d4dc">--</div>
         </div>
       </div>
 
@@ -273,6 +258,7 @@
 <div class="status-bar">
   <span id="dataCount">--</span>
   <span id="lastUpdate">--</span>
+  <span id="autoRefreshCountdown" style="color:#26a69a;margin-left:12px">⏳ 60s</span>
 </div>
 
 <script>
@@ -291,6 +277,9 @@ let macdCharts = {}, macdLineSeries = {}, macdSignalSeries = {}, macdHistSeries 
 let currentLimit = 2000;
 let rawData = [];
 let replayTimer = null;
+const FULL_DATASET_LIMIT = 250000;
+let fullDatasetForRegions = null;
+let fullRegionFetchStarted = false;
 
 function getChartWidth() { return document.getElementById('leftPanel').clientWidth; }
 function getMainChartHeight() { return Math.max(280, (window.innerHeight - 52) * 0.42); }
@@ -364,6 +353,18 @@ function update3DChart(data, sliceOverride) {
     }
   });
 
+  const timeLabels = slice.map(r => {
+    if (!r.open_time) return '';
+    const d = new Date(r.open_time);
+    return d.toLocaleString('vi-VN', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+  });
+  const tickStep = Math.max(1, Math.floor(slice.length / 10));
+  const tickVals = [], tickTexts = [];
+  for (let i = 0; i < slice.length; i += tickStep) {
+    tickVals.push(i);
+    tickTexts.push(timeLabels[i]);
+  }
+
   const traces = [
     {
       type: 'surface',
@@ -406,9 +407,11 @@ function update3DChart(data, sliceOverride) {
       bgcolor: '#0d1117',
       xaxis: {
         title: { text: 'Time', font: { color: '#e0e3eb', size: 11 } },
-        color: '#e0e3eb', tickfont: { color: '#b0b4bc', size: 10 },
+        color: '#e0e3eb', tickfont: { color: '#b0b4bc', size: 9 },
         gridcolor: '#2a2e39', zerolinecolor: '#2a2e39',
-        showticklabels: false,
+        showticklabels: true,
+        tickvals: tickVals, ticktext: tickTexts,
+        tickangle: -30,
       },
       yaxis: {
         title: { text: '', font: { color: '#e0e3eb' } },
@@ -421,6 +424,7 @@ function update3DChart(data, sliceOverride) {
         color: '#e0e3eb', tickfont: { color: '#b0b4bc', size: 10 },
         gridcolor: '#2a2e39', zerolinecolor: '#555',
       },
+      aspectratio: { x: 1, y: 2, z: 0.8 },
       camera: { eye: { x: 1.6, y: -1.8, z: 0.9 } },
     },
     font: { color: '#e0e3eb', size: 11 },
@@ -463,86 +467,301 @@ function toggleReplay() {
 //  STATS
 // ==========================================
 
+/** Trả về bản sao data với hist_1h, hist_4h, hist_1d được fill theo chu kỳ:
+ *  trong mỗi bar 1h/4h/1d, mọi nến 5m dùng chung giá trị hist của nến đóng bar (nến cuối chu kỳ).
+ *  Giúp định nghĩa miền dương 1h/4h/1d giống 5m: cùng logic "đoạn liên tiếp hist > 0".
+ */
+function fillHistForHigherTF(data) {
+  if (!data || data.length === 0) return data;
+  const PERIOD = { '1h': 3600, '4h': 3600 * 4, '1d': 3600 * 24 };
+  const out = data.map(r => ({ ...r }));
+  for (const tf of ['1h', '4h', '1d']) {
+    const periodSec = PERIOD[tf];
+    const key = `hist_${tf}`;
+    let i = 0;
+    while (i < out.length) {
+      const t0 = Math.floor(toTimestamp(out[i].open_time) / periodSec) * periodSec;
+      let j = i;
+      while (j < out.length && Math.floor(toTimestamp(out[j].open_time) / periodSec) * periodSec === t0) j++;
+      const lastIdx = j - 1;
+      const fillVal = Number(out[lastIdx][key]) || 0;
+      for (let k = i; k < j; k++) out[k][key] = fillVal;
+      i = j;
+    }
+  }
+  return out;
+}
+
+function countPositiveRegions(data, histKey) {
+  const useData = (histKey !== 'hist_5m') ? fillHistForHigherTF(data) : data;
+  let count = 0, inPositive = false;
+  for (const r of useData) {
+    const h = Number(r[histKey]) || 0;
+    if (h > 0) {
+      if (!inPositive) { count++; inPositive = true; }
+    } else {
+      inPositive = false;
+    }
+  }
+  return count;
+}
+
+function getRegionsForTF(data, histKey) {
+  const useData = (histKey !== 'hist_5m') ? fillHistForHigherTF(data) : data;
+  const regions = [];
+  let current = null;
+  for (const r of useData) {
+    const h = Number(r[histKey]) || 0;
+    if (h > 0) {
+      if (!current) current = [];
+      current.push(r);
+    } else {
+      if (current) { regions.push(current); current = null; }
+    }
+  }
+  if (current) regions.push(current);
+  return regions;
+}
+
+function buildHistogramBucketsCandles(regions) {
+  const buckets = ['1-2', '3-5', '6-10', '11-20', '21-50', '51-100', '100+'];
+  const bounds = [1, 3, 6, 11, 21, 51, 101];
+  const counts = new Array(buckets.length).fill(0);
+  for (const reg of regions) {
+    const n = reg.length;
+    let i = bounds.length - 1;
+    while (i >= 0 && n < bounds[i]) i--;
+    counts[i >= 0 ? i : 0]++;
+  }
+  return { labels: buckets, values: counts };
+}
+
+function buildHistogramBucketsValues(values, numBins, minCount = 5) {
+  if (values.length === 0) return { labels: [], values: [], ranges: [] };
+  const sorted = [...values].sort((a, b) => a - b);
+  const p2 = sorted[Math.floor(sorted.length * 0.02)];
+  const p98 = sorted[Math.ceil(sorted.length * 0.98) - 1];
+  const clipped = values.filter(v => v >= p2 && v <= p98);
+  if (clipped.length === 0) return { labels: [], values: [], ranges: [] };
+  const min = Math.min(...clipped), max = Math.max(...clipped);
+  const step = (max - min) / numBins || 1;
+  const counts = new Array(numBins).fill(0);
+  const labels = [], ranges = [];
+  for (let i = 0; i < numBins; i++) {
+    const a = min + i * step, b = i === numBins - 1 ? max + 0.01 : min + (i + 1) * step;
+    labels.push(step >= 1 ? `${Math.round(a)}–${Math.round(b)}` : `${a.toFixed(0)}–${b.toFixed(0)}`);
+    ranges.push([a, b]);
+  }
+  for (const v of clipped) {
+    let i = Math.min(numBins - 1, Math.floor((v - min) / step));
+    if (i < 0) i = 0;
+    counts[i]++;
+  }
+  const fLabels = [], fValues = [], fRanges = [];
+  for (let i = 0; i < labels.length; i++) {
+    if (counts[i] >= minCount) { fLabels.push(labels[i]); fValues.push(counts[i]); fRanges.push(ranges[i]); }
+  }
+  return { labels: fLabels, values: fValues, ranges: fRanges };
+}
+
+const _regionMeta = {};
+const _activeFilter = {};
+const NUM_BINS = 20;
+
+function regionDarkLayout() {
+  return {
+    paper_bgcolor: '#131722',
+    plot_bgcolor: '#161b22',
+    font: { color: '#e0e3eb', size: 10 },
+    margin: { t: 28, b: 28, l: 40, r: 12 },
+    xaxis: { color: '#b0b4bc', gridcolor: '#2a2e39', tickangle: -45 },
+    yaxis: { color: '#b0b4bc', gridcolor: '#2a2e39' },
+    bargap: 0.08,
+    showlegend: false,
+  };
+}
+
+function buildRegionMeta(regions) {
+  return regions.map(r => {
+    const firstOpen = Number(r[0].open) || 0;
+    const maxHigh = Math.max(...r.map(x => Number(x.high) || 0));
+    const minLow = Math.min(...r.map(x => Number(x.low) || 0));
+    return { region: r, count: r.length, highOpen: maxHigh - firstOpen, openLow: firstOpen - minLow };
+  });
+}
+
+function renderAllThreeCharts(tf, meta, source, filterLabel) {
+  const dl = regionDarkLayout();
+  const suffix = filterLabel ? ` [${filterLabel}]` : '';
+  const ACTIVE = '#ffab00', DIM_BLUE = 'rgba(41,98,255,0.15)', DIM_GREEN = 'rgba(38,166,154,0.15)', DIM_RED = 'rgba(239,83,80,0.15)';
+
+  const h1 = buildHistogramBucketsValues(meta.map(m => m.count), NUM_BINS, 0);
+  const h2 = buildHistogramBucketsValues(meta.map(m => m.highOpen), NUM_BINS, 0);
+  const h3 = buildHistogramBucketsValues(meta.map(m => m.openLow), NUM_BINS, 0);
+
+  const c1colors = source === 'candles'
+    ? h1.labels.map(l => l === filterLabel ? ACTIVE : DIM_BLUE)
+    : new Array(h1.labels.length).fill('#2962ff');
+  const c2colors = source === 'highOpen'
+    ? h2.labels.map(l => l === filterLabel ? ACTIVE : DIM_GREEN)
+    : new Array(h2.labels.length).fill('#26a69a');
+  const c3colors = source === 'openLow'
+    ? h3.labels.map(l => l === filterLabel ? ACTIVE : DIM_RED)
+    : new Array(h3.labels.length).fill('#ef5350');
+
+  const titleCandles = source === 'candles' ? `Số nến / miền ▸ ${filterLabel}` : (source ? `Số nến / miền${suffix}` : 'Số nến / miền');
+  const titleHO = source === 'highOpen' ? `High − Open ▸ ${filterLabel}` : (source ? `High − Open${suffix}` : 'High − Open');
+  const titleOL = source === 'openLow' ? `Open − Low ▸ ${filterLabel}` : (source ? `Open − Low${suffix}` : 'Open − Low');
+
+  Plotly.react(`regionCharts_${tf}_candles`, [{
+    type: 'bar', x: h1.labels, y: h1.values, marker: { color: c1colors },
+  }], { ...dl, title: { text: titleCandles, font: { size: 11 } } }, { responsive: true, displayModeBar: false });
+
+  Plotly.react(`regionCharts_${tf}_highOpen`, [{
+    type: 'bar', x: h2.labels, y: h2.values, marker: { color: c2colors },
+  }], { ...dl, title: { text: titleHO, font: { size: 11 } } }, { responsive: true, displayModeBar: false });
+
+  Plotly.react(`regionCharts_${tf}_openLow`, [{
+    type: 'bar', x: h3.labels, y: h3.values, marker: { color: c3colors },
+  }], { ...dl, title: { text: titleOL, font: { size: 11 } } }, { responsive: true, displayModeBar: false });
+
+  return { h1, h2, h3 };
+}
+
+function applyFilter(tf, source, clickedLabel) {
+  const allMeta = _regionMeta[tf];
+  if (!allMeta) return;
+  const prev = _activeFilter[tf];
+
+  if (prev && prev.source === source && prev.label === clickedLabel) {
+    _activeFilter[tf] = null;
+    renderAllThreeCharts(tf, allMeta, null, null);
+    bindAllClickHandlers(tf);
+    return;
+  }
+
+  const keyMap = { candles: 'count', highOpen: 'highOpen', openLow: 'openLow' };
+  const key = keyMap[source];
+  const allVals = allMeta.map(m => m[key]);
+  const hist = buildHistogramBucketsValues(allVals, NUM_BINS, 0);
+  const idx = hist.labels.indexOf(clickedLabel);
+  if (idx < 0) return;
+  const [rLo, rHi] = hist.ranges[idx];
+  const filtered = allMeta.filter(m => m[key] >= rLo && m[key] < rHi);
+
+  _activeFilter[tf] = { source, label: clickedLabel };
+  renderAllThreeCharts(tf, filtered, source, clickedLabel);
+  bindAllClickHandlers(tf);
+}
+
+function bindAllClickHandlers(tf) {
+  ['candles', 'highOpen', 'openLow'].forEach(chartType => {
+    const el = document.getElementById(`regionCharts_${tf}_${chartType}`);
+    if (!el) return;
+    el.removeAllListeners && el.removeAllListeners('plotly_click');
+    el.on('plotly_click', function(ev) {
+      if (!ev || !ev.points || ev.points.length === 0) return;
+      applyFilter(tf, chartType, ev.points[0].x);
+    });
+  });
+}
+
+function renderRegionChartsForTF(tf, data) {
+  const histKey = `hist_${tf}`;
+  const regions = getRegionsForTF(data, histKey);
+  if (regions.length === 0) return;
+
+  _regionMeta[tf] = buildRegionMeta(regions);
+  _activeFilter[tf] = null;
+
+  renderAllThreeCharts(tf, _regionMeta[tf], null, null);
+  bindAllClickHandlers(tf);
+}
+
+function toggleRegionRow(tf) {
+  const row = document.getElementById(`expand_${tf}`);
+  const arrow = document.getElementById(`arrow_${tf}`);
+  if (!row || !arrow) return;
+  const isHidden = row.style.display === 'none';
+  row.style.display = isHidden ? 'table-row' : 'none';
+  arrow.textContent = isHidden ? '▼' : '▶';
+  if (isHidden && fullDatasetForRegions) {
+    const container = document.getElementById(`regionCharts_${tf}_candles`);
+    if (container && !container.hasChildNodes()) {
+      renderRegionChartsForTF(tf, fullDatasetForRegions);
+      setTimeout(() => ['candles', 'highOpen', 'openLow'].forEach(s => Plotly.Plots.resize(`regionCharts_${tf}_${s}`)), 50);
+    }
+  }
+}
+
+function updateRegionStatsUI(data) {
+  if (!data || data.length === 0) return;
+  const totalNen = data.length;
+  const regions = {
+    '5m': countPositiveRegions(data, 'hist_5m'),
+    '1h': countPositiveRegions(data, 'hist_1h'),
+    '4h': countPositiveRegions(data, 'hist_4h'),
+    '1d': countPositiveRegions(data, 'hist_1d'),
+  };
+  const tfs = ['5m', '1h', '4h', '1d'];
+  const el = document.getElementById('histPositiveRegionsStat');
+  if (!el) return;
+  el.innerHTML = `
+    <div style="margin-bottom:6px;color:#787b86">Thống kê trên toàn bộ bảng BTCJPY: <strong style="color:#d1d4dc">${totalNen.toLocaleString('vi-VN')}</strong> nến</div>
+    <table class="tf-table" style="margin:0">
+      <thead><tr><th>TF</th><th>Số miền dương</th><th style="width:32px"></th></tr></thead>
+      <tbody>
+        ${tfs.map(tf => `
+        <tr class="tf-row" data-tf="${tf}">
+          <td class="tf-name">${tf.toUpperCase()}</td>
+          <td><strong>${regions[tf]}</strong></td>
+          <td><span id="arrow_${tf}" class="region-expand-arrow" role="button" tabindex="0" style="cursor:pointer;user-select:none;font-size:10px;color:#787b86">▶</span></td>
+        </tr>
+        <tr id="expand_${tf}" style="display:none"><td colspan="3" style="padding:8px;vertical-align:top;border-bottom:1px solid #1e222d">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <div id="regionCharts_${tf}_candles" style="height:160px"></div>
+            <div id="regionCharts_${tf}_highOpen" style="height:160px"></div>
+            <div id="regionCharts_${tf}_openLow" style="height:160px"></div>
+          </div>
+        </td></tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  tfs.forEach(tf => {
+    const arrow = document.getElementById(`arrow_${tf}`);
+    if (arrow) arrow.addEventListener('click', () => toggleRegionRow(tf));
+  });
+}
+
+async function fetchFullDatasetForRegions() {
+  if (fullRegionFetchStarted) return;
+  fullRegionFetchStarted = true;
+  const el = document.getElementById('histPositiveRegionsStat');
+  if (el) el.innerHTML = '<span style="color:#787b86">Đang tải thống kê toàn bộ bảng BTCJPY (~200k nến)...</span>';
+  try {
+    const res = await fetch(`/api/btcjpy/latest?limit=${FULL_DATASET_LIMIT}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    fullDatasetForRegions = json.data || [];
+    updateRegionStatsUI(fullDatasetForRegions);
+  } catch (err) {
+    if (el) el.innerHTML = `<span style="color:#ef5350">Lỗi tải thống kê: ${err.message}</span>`;
+  }
+}
+
 function computeStats(data) {
   if (!data || data.length < 2) return;
-  const last = data[data.length - 1];
-  const tfs = ['5m', '1h', '4h', '1d'];
-
-  // MACD per-TF table
-  const tbody = document.getElementById('tfTableBody');
-  tbody.innerHTML = tfs.map(tf => {
-    const m = Number(last[`macd_${tf}`]);
-    const s = Number(last[`signal_${tf}`]);
-    const h = Number(last[`hist_${tf}`]);
-    let prevH = data.length >= 2 ? Number(data[data.length - 2][`hist_${tf}`]) || 0 : 0;
-    const trend = h > 0 ? 'Bullish' : h < 0 ? 'Bearish' : 'Neutral';
-    const trendClass = h > 0 ? 'badge-bull' : h < 0 ? 'badge-bear' : 'badge-neutral';
-    const momentum = Math.abs(h) > Math.abs(prevH) ? 'Tăng tốc' : 'Giảm tốc';
-    const momClass = Math.abs(h) > Math.abs(prevH) ? (h >= 0 ? 'badge-bull' : 'badge-bear') : 'badge-neutral';
-    return `<tr>
-      <td class="tf-name">${tf.toUpperCase()}</td>
-      <td style="color:${m >= 0 ? '#26a69a' : '#ef5350'}">${fmtSigned(m)}</td>
-      <td style="color:${s >= 0 ? '#26a69a' : '#ef5350'}">${fmtSigned(s)}</td>
-      <td style="color:${h >= 0 ? '#26a69a' : '#ef5350'};font-weight:600">${fmtSigned(h)}</td>
-      <td><span class="badge ${trendClass}">${trend}</span></td>
-      <td><span class="badge ${momClass}">${momentum}</span></td>
-    </tr>`;
-  }).join('');
-
   update3DChart(data);
 
-  // Price Stats
-  const closes = data.map(r => Number(r.close)).filter(v => !isNaN(v));
-  const highs = data.map(r => Number(r.high)).filter(v => !isNaN(v));
-  const lows = data.map(r => Number(r.low)).filter(v => !isNaN(v));
-  const vols = data.map(r => Number(r.volume)).filter(v => !isNaN(v));
-  const curPrice = closes[closes.length - 1];
-  const periodHigh = Math.max(...highs);
-  const periodLow = Math.min(...lows);
-  const priceRange = periodHigh - periodLow;
-  const rangePos = priceRange > 0 ? ((curPrice - periodLow) / priceRange * 100).toFixed(1) : 0;
-  const avgVol = vols.length > 0 ? vols.reduce((a, b) => a + b, 0) / vols.length : 0;
-  const lastVol = vols[vols.length - 1] || 0;
-  const volRatio = avgVol > 0 ? (lastVol / avgVol).toFixed(2) : '--';
-  const returns = [];
-  for (let i = 1; i < closes.length; i++) returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
-  const vol = returns.length > 0 ? Math.sqrt(returns.reduce((s, r) => s + r * r, 0) / returns.length) * 100 : 0;
-  const change = closes.length >= 2 ? curPrice - closes[0] : 0;
-  const changePct = closes.length >= 2 ? (change / closes[0]) * 100 : 0;
-
-  document.getElementById('priceStatsGrid').innerHTML = [
-    { label: 'Cao nhất (kỳ)', value: fmt(periodHigh), color: '#26a69a' },
-    { label: 'Thấp nhất (kỳ)', value: fmt(periodLow), color: '#ef5350' },
-    { label: 'Vị trí trong range', value: rangePos + '%', color: '#d1d4dc' },
-    { label: 'Biên độ range', value: fmt(priceRange), color: '#787b86' },
-    { label: 'Thay đổi (kỳ)', value: (change >= 0 ? '+' : '') + fmt(change) + ` (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%)`, color: change >= 0 ? '#26a69a' : '#ef5350' },
-    { label: 'Volatility (σ)', value: vol.toFixed(3) + '%', color: '#d1d4dc' },
-    { label: 'Volume TB', value: fmt(avgVol, 2), color: '#787b86' },
-    { label: 'Vol hiện tại / TB', value: volRatio + 'x', color: Number(volRatio) > 1.5 ? '#ff6d00' : '#d1d4dc' },
-  ].map(s => `<div class="stat-card"><div class="stat-label">${s.label}</div><div class="stat-value" style="color:${s.color}">${s.value}</div></div>`).join('');
-
-  // Cross signals
-  const crossEl = document.getElementById('crossSignals');
-  const crosses = [];
-  tfs.forEach(tf => {
-    for (let i = data.length - 1; i >= 1 && i >= data.length - 200; i--) {
-      const cM = Number(data[i][`macd_${tf}`]), cS = Number(data[i][`signal_${tf}`]);
-      const pM = Number(data[i - 1][`macd_${tf}`]), pS = Number(data[i - 1][`signal_${tf}`]);
-      if (isNaN(cM) || isNaN(cS) || isNaN(pM) || isNaN(pS)) continue;
-      const bull = pM <= pS && cM > cS, bear = pM >= pS && cM < cS;
-      if (bull || bear) {
-        crosses.push({ tf, type: bull ? 'bull' : 'bear', barsAgo: data.length - 1 - i, time: data[i].open_time });
-        break;
-      }
-    }
-  });
-  crossEl.innerHTML = crosses.length === 0
-    ? '<div style="color:#787b86;font-size:11px;padding:4px">Không tìm thấy tín hiệu giao cắt trong 200 nến gần nhất</div>'
-    : '<table class="tf-table"><thead><tr><th>TF</th><th>Loại</th><th>Cách đây</th><th>Thời gian</th></tr></thead><tbody>'
-      + crosses.map(c => {
-        const t = new Date(c.time).toLocaleString('vi-VN', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
-        return `<tr><td class="tf-name">${c.tf.toUpperCase()}</td><td><span class="badge ${c.type === 'bull' ? 'badge-bull' : 'badge-bear'}">${c.type === 'bull' ? 'Bullish Cross' : 'Bearish Cross'}</span></td><td>${c.barsAgo} nến</td><td style="color:#787b86">${t}</td></tr>`;
-      }).join('') + '</tbody></table>';
+  const el = document.getElementById('histPositiveRegionsStat');
+  if (!el) return;
+  if (fullDatasetForRegions) {
+    updateRegionStatsUI(fullDatasetForRegions);
+  } else {
+    el.innerHTML = '<span style="color:#787b86">Đang tải thống kê toàn bộ bảng BTCJPY (~200k nến)...</span>';
+    fetchFullDatasetForRegions();
+  }
 }
 
 // ==========================================
@@ -690,6 +909,17 @@ function init() {
   document.getElementById('replayBtn').addEventListener('click', toggleReplay);
   window.addEventListener('resize', handleResize);
   loadData();
+
+  let countdown = 60;
+  const cdEl = document.getElementById('autoRefreshCountdown');
+  setInterval(() => {
+    countdown--;
+    if (cdEl) cdEl.textContent = `⏳ ${countdown}s`;
+    if (countdown <= 0) {
+      countdown = 60;
+      loadData();
+    }
+  }, 1000);
 }
 
 init();
