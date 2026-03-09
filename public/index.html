@@ -954,11 +954,13 @@ function renderMacd5mTable(filteredMeta) {
   sorted.forEach(g => {
     const avgHighOpen = g.sumHO / g.n;
     const avgOpenLow = g.sumOL / g.n;
+    const rrPerRow = avgOpenLow > 0 ? (avgHighOpen / avgOpenLow) : null;
     rows += `<tr>
       <td>${g.count}</td>
       <td>${g.n.toLocaleString('vi-VN')}</td>
       <td>${avgHighOpen.toFixed(2)}%</td>
       <td>${avgOpenLow.toFixed(2)}%</td>
+      <td>${rrPerRow == null ? '--' : rrPerRow.toFixed(2)}</td>
     </tr>`;
   });
 
@@ -966,6 +968,11 @@ function renderMacd5mTable(filteredMeta) {
     container.innerHTML = '<span style="color:#787b86">Không có dữ liệu cho bảng.</span>';
     return;
   }
+
+  const totalRegions = filteredMeta.length;
+  const expectedHighOpen = filteredMeta.reduce((s, m) => s + m.highOpen, 0) / totalRegions;
+  const expectedOpenLow = filteredMeta.reduce((s, m) => s + m.openLow, 0) / totalRegions;
+  const rr = expectedOpenLow > 0 ? (expectedHighOpen / expectedOpenLow) : null;
 
   container.innerHTML = `
     <table class="macd5m-table">
@@ -975,10 +982,17 @@ function renderMacd5mTable(filteredMeta) {
           <th>Số miền</th>
           <th>Kỳ vọng (High−Open)/Open %</th>
           <th>Kỳ vọng (Open−Low)/Open %</th>
+          <th>RR</th>
         </tr>
       </thead>
       <tbody>
         ${rows}
+        <tr>
+          <td colspan="4" style="text-align:left;font-weight:600;color:#b0b4bc">
+            Hệ số Risk-Reward = Kỳ vọng (High−Open)/Open % / Kỳ vọng (Open−Low)/Open %
+          </td>
+          <td style="font-weight:700;color:#ffab00">${rr == null ? '--' : rr.toFixed(2)}</td>
+        </tr>
       </tbody>
     </table>
   `;
