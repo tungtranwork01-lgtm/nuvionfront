@@ -183,6 +183,63 @@
     .macd5m-table th { color: #787b86; font-weight: 600; font-size: 10px; text-transform: uppercase; }
     .macd5m-table tr:last-child td { border-bottom: none; }
 
+    .macd5m-expand-btn{
+      width: 18px; height: 18px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid #2a2e39; border-radius: 4px;
+      background: #131722; color: #d1d4dc;
+      cursor: pointer; user-select: none;
+      font-size: 12px; line-height: 1;
+    }
+    .macd5m-expand-btn:hover{ border-color:#3a4254; background:#161b22; }
+    .macd5m-expand-cell{ text-align:center !important; width:26px; }
+    .macd5m-detail-row td{ padding: 6px 6px 10px 6px; background:#0f1420; }
+    .macd5m-detail-wrap{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .macd5m-detail-chart{ height: 180px; border:1px solid #1e222d; border-radius:6px; overflow:hidden; }
+
+    .macd5m-ci-wrap{ margin-top:10px; }
+    .macd5m-ci-title{ color:#787b86; font-size:10px; text-transform:uppercase; margin: 0 0 6px 0; }
+    .macd5m-ci-table{ width:100%; border-collapse: collapse; }
+    .macd5m-ci-table th, .macd5m-ci-table td{
+      border-bottom: 1px solid #1e222d;
+      padding: 4px 6px;
+      text-align: right;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .macd5m-ci-table th:first-child, .macd5m-ci-table td:first-child{ text-align:left; }
+    .macd5m-ci-table th{ color:#787b86; font-weight:600; font-size:10px; text-transform:uppercase; }
+    .macd5m-ci-subtle{ color:#b0b4bc; }
+
+    .macd5m-ai-wrap{ margin-top:12px; border:1px solid #1e222d; border-radius:6px; background:#0f1420; overflow:hidden; }
+    .macd5m-ai-header{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:8px 10px; background:#131722; border-bottom:1px solid #1e222d;
+    }
+    .macd5m-ai-header-left{ display:flex; align-items:center; gap:6px; }
+    .macd5m-ai-label{ font-size:10px; color:#787b86; text-transform:uppercase; font-weight:600; }
+    .macd5m-ai-badge{
+      font-size:9px; padding:1px 6px; border-radius:3px;
+      background:#2962ff22; color:#5b8def; border:1px solid #2962ff44;
+    }
+    .macd5m-ai-btn{
+      font-size:11px; padding:4px 12px; border:1px solid #2962ff; border-radius:4px;
+      background:#2962ff22; color:#5b8def; cursor:pointer; font-weight:600;
+      transition: background 0.15s, color 0.15s;
+    }
+    .macd5m-ai-btn:hover{ background:#2962ff; color:#fff; }
+    .macd5m-ai-btn:disabled{ opacity:0.5; cursor:not-allowed; }
+    .macd5m-ai-body{ padding:10px 12px; font-size:12px; color:#d1d4dc; line-height:1.6; white-space:pre-wrap; min-height:32px; }
+    .macd5m-ai-body p{ margin:0 0 6px 0; }
+    .macd5m-ai-body strong{ color:#ffab00; }
+    .macd5m-ai-body em{ color:#26a69a; font-style:normal; }
+    .macd5m-ai-placeholder{ color:#787b86; font-style:italic; font-size:11px; }
+    .macd5m-ai-loading{ display:inline-flex; align-items:center; gap:6px; color:#787b86; font-size:11px; }
+    .macd5m-ai-dot{ width:4px; height:4px; border-radius:50%; background:#5b8def; animation: aiPulse 1.2s infinite; }
+    .macd5m-ai-dot:nth-child(2){ animation-delay:0.2s; }
+    .macd5m-ai-dot:nth-child(3){ animation-delay:0.4s; }
+    @keyframes aiPulse{ 0%,80%,100%{opacity:0.2} 40%{opacity:1} }
+
 .right-panel::-webkit-scrollbar { width: 6px; }
     .right-panel::-webkit-scrollbar-track { background: #0d1117; }
     .right-panel::-webkit-scrollbar-thumb { background: #2a2e39; border-radius: 3px; }
@@ -880,6 +937,7 @@ const MACD5M_REGION_BINS = 15;
 let macd5mFullMeta = [];
 let macd5mBinRanges = { candles: null, highOpen: null, openLow: null };
 let macd5mActiveCrossFilter = { candles: null, highOpen: null, openLow: null };
+let macd5mExpandedCounts = new Set();
 
 function getMacd5mRegionFilters() {
   return {
@@ -935,17 +993,36 @@ function renderMacd5mTable(filteredMeta) {
     return;
   }
 
+  const percentile = (arr, p) => {
+    if (!arr.length) return NaN;
+    const a = [...arr].sort((x, y) => x - y);
+    const clamped = Math.min(1, Math.max(0, p));
+    const idx = (a.length - 1) * clamped;
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    if (lo === hi) return a[lo];
+    const t = idx - lo;
+    return a[lo] * (1 - t) + a[hi] * t;
+  };
+
+  const centralInterval = (arr, level) => {
+    // level = 0.90 => [P5, P95]
+    const alpha = (1 - level) / 2;
+    return { lo: percentile(arr, alpha), hi: percentile(arr, 1 - alpha) };
+  };
+
   // Gom theo đúng số nến dương/miền (1,2,3,...) thay vì theo bin của chart
   const groups = new Map();
   filteredMeta.forEach(m => {
     const k = m.count;
     if (!groups.has(k)) {
-      groups.set(k, { count: k, n: 0, sumHO: 0, sumOL: 0 });
+      groups.set(k, { count: k, n: 0, sumHO: 0, sumOL: 0, hoVals: [], olVals: [] });
     }
     const g = groups.get(k);
     g.n += 1;
     g.sumHO += m.highOpen;
     g.sumOL += m.openLow;
+    g.hoVals.push(m.highOpen);
+    g.olVals.push(m.openLow);
   });
 
   const sorted = Array.from(groups.values()).sort((a, b) => a.count - b.count);
@@ -955,13 +1032,32 @@ function renderMacd5mTable(filteredMeta) {
     const avgHighOpen = g.sumHO / g.n;
     const avgOpenLow = g.sumOL / g.n;
     const rrPerRow = avgOpenLow > 0 ? (avgHighOpen / avgOpenLow) : null;
-    rows += `<tr>
+    const expanded = macd5mExpandedCounts.has(g.count);
+    const btn = `<button type="button" class="macd5m-expand-btn" data-count="${g.count}" aria-expanded="${expanded ? 'true' : 'false'}">${expanded ? '−' : '+'}</button>`;
+    const detailRow = `
+      <tr class="macd5m-detail-row" data-count="${g.count}" style="display:${expanded ? 'table-row' : 'none'}">
+        <td colspan="6">
+          <div class="macd5m-detail-wrap">
+            <div>
+              <div style="margin-bottom:4px;color:#787b86;font-size:10px;text-transform:uppercase">Histogram (High−Open)/Open % — số miền</div>
+              <div class="macd5m-detail-chart" id="macd5mRowHO_${g.count}"></div>
+            </div>
+            <div>
+              <div style="margin-bottom:4px;color:#787b86;font-size:10px;text-transform:uppercase">Histogram (Open−Low)/Open % — số miền</div>
+              <div class="macd5m-detail-chart" id="macd5mRowOL_${g.count}"></div>
+            </div>
+          </div>
+        </td>
+      </tr>
+    `;
+    rows += `<tr data-count="${g.count}">
+      <td class="macd5m-expand-cell">${btn}</td>
       <td>${g.count}</td>
       <td>${g.n.toLocaleString('vi-VN')}</td>
       <td>${avgHighOpen.toFixed(2)}%</td>
       <td>${avgOpenLow.toFixed(2)}%</td>
       <td>${rrPerRow == null ? '--' : rrPerRow.toFixed(2)}</td>
-    </tr>`;
+    </tr>${detailRow}`;
   });
 
   if (!rows) {
@@ -974,10 +1070,37 @@ function renderMacd5mTable(filteredMeta) {
   const expectedOpenLow = filteredMeta.reduce((s, m) => s + m.openLow, 0) / totalRegions;
   const rr = expectedOpenLow > 0 ? (expectedHighOpen / expectedOpenLow) : null;
 
+  const countsArr = filteredMeta.map(m => m.count);
+  const hoArr = filteredMeta.map(m => m.highOpen);
+  const olArr = filteredMeta.map(m => m.openLow);
+  const LEVELS = [
+    { label: '90%', level: 0.90 },
+    { label: '95%', level: 0.95 },
+    { label: '99%', level: 0.99 },
+  ];
+  const fmtNum = (x, digits = 2) => Number.isFinite(x) ? x.toFixed(digits) : '--';
+  const fmtPct = (x) => `${fmtNum(x, 2)}%`;
+  const fmtCount = (x) => fmtNum(x, 2);
+  const nRegionsStr = totalRegions.toLocaleString('vi-VN');
+
+  let ciRows = '';
+  LEVELS.forEach(({ label, level }) => {
+    const rCount = centralInterval(countsArr, level);
+    const rHO = centralInterval(hoArr, level);
+    const rOL = centralInterval(olArr, level);
+    ciRows += `<tr>
+      <td>${label}</td>
+      <td>${fmtCount(rCount.lo)} – ${fmtCount(rCount.hi)}</td>
+      <td>${fmtPct(rHO.lo)} – ${fmtPct(rHO.hi)}</td>
+      <td>${fmtPct(rOL.lo)} – ${fmtPct(rOL.hi)}</td>
+    </tr>`;
+  });
+
   container.innerHTML = `
     <table class="macd5m-table">
       <thead>
         <tr>
+          <th></th>
           <th>Số nến dương / miền</th>
           <th>Số miền</th>
           <th>Kỳ vọng (High−Open)/Open %</th>
@@ -988,14 +1111,304 @@ function renderMacd5mTable(filteredMeta) {
       <tbody>
         ${rows}
         <tr>
-          <td colspan="4" style="text-align:left;font-weight:600;color:#b0b4bc">
+          <td colspan="5" style="text-align:left;font-weight:600;color:#b0b4bc">
             Hệ số Risk-Reward = Kỳ vọng (High−Open)/Open % / Kỳ vọng (Open−Low)/Open %
           </td>
           <td style="font-weight:700;color:#ffab00">${rr == null ? '--' : rr.toFixed(2)}</td>
         </tr>
       </tbody>
     </table>
+    <div class="macd5m-ci-wrap">
+      <div class="macd5m-ci-title">Khoảng dao động theo confidence level (percentile) <span class="macd5m-ci-subtle">(n = ${nRegionsStr} miền)</span></div>
+      <table class="macd5m-ci-table">
+        <thead>
+          <tr>
+            <th>Confidence</th>
+            <th>Số nến dương / miền</th>
+            <th>(High−Open)/Open %</th>
+            <th>(Open−Low)/Open %</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${ciRows}
+        </tbody>
+      </table>
+    </div>
+    <div class="macd5m-ai-wrap">
+      <div class="macd5m-ai-header">
+        <div class="macd5m-ai-header-left">
+          <span class="macd5m-ai-label">Phân tích AI</span>
+          <span class="macd5m-ai-badge">OpenAI</span>
+          <select id="macd5mAiModel" style="font-size:10px;padding:2px 4px;background:#131722;color:#d1d4dc;border:1px solid #2a2e39;border-radius:3px;cursor:pointer">
+            <option value="gpt-4.1">GPT-4.1</option>
+            <option value="o3-mini" selected>o3-mini (Reasoning)</option>
+            <option value="o4-mini">o4-mini (Reasoning)</option>
+          </select>
+        </div>
+        <button type="button" class="macd5m-ai-btn" id="macd5mAiBtn">Phân tích 8 kịch bản</button>
+      </div>
+      <div class="macd5m-ai-body" id="macd5mAiBody">
+        <span class="macd5m-ai-placeholder">Nhấn "Phân tích 8 kịch bản" để AI quét qua tất cả tổ hợp bộ lọc MACD (1h/4h/1d) và đưa chiến lược vào lệnh chi tiết cho từng trạng thái.</span>
+      </div>
+    </div>
   `;
+
+  // Bind AI analysis button
+  const aiBtn = document.getElementById('macd5mAiBtn');
+  if (aiBtn && !aiBtn.dataset.bound) {
+    aiBtn.dataset.bound = '1';
+    aiBtn.addEventListener('click', () => requestMacd5mAiAnalysis());
+  }
+
+  // Bind expand handlers + vẽ histogram khi mở
+  const BIN_MIN = 10, BIN_MAX = 20;
+  const rowBins = Math.min(BIN_MAX, Math.max(BIN_MIN, Number(MACD5M_REGION_BINS) || 15));
+  const dl = regionDarkLayout();
+  const NORMAL = '#2962ff';
+
+  const renderRowHists = (count) => {
+    const g = groups.get(count);
+    if (!g) return;
+    const elHO = document.getElementById(`macd5mRowHO_${count}`);
+    const elOL = document.getElementById(`macd5mRowOL_${count}`);
+    if (!elHO || !elOL) return;
+
+    const brHO = buildHistogramBucketsPercent(g.hoVals, rowBins);
+    const brOL = buildHistogramBucketsPercent(g.olVals, rowBins);
+    const cHO = countInBins(g.hoVals, brHO.ranges);
+    const cOL = countInBins(g.olVals, brOL.ranges);
+
+    Plotly.react(elHO, [{
+      type: 'bar',
+      x: brHO.labels,
+      y: cHO,
+      marker: { color: NORMAL },
+    }], {
+      ...dl,
+      margin: { ...dl.margin, t: 22 },
+      title: { text: `(High − Open) / Open % — ${rowBins} bins`, font: { size: 11 } },
+      xaxis: { ...dl.xaxis, title: { text: '%' } },
+      yaxis: { ...dl.yaxis, title: { text: 'Số miền' } },
+    }, { responsive: true, displayModeBar: false });
+
+    Plotly.react(elOL, [{
+      type: 'bar',
+      x: brOL.labels,
+      y: cOL,
+      marker: { color: NORMAL },
+    }], {
+      ...dl,
+      margin: { ...dl.margin, t: 22 },
+      title: { text: `(Open − Low) / Open % — ${rowBins} bins`, font: { size: 11 } },
+      xaxis: { ...dl.xaxis, title: { text: '%' } },
+      yaxis: { ...dl.yaxis, title: { text: 'Số miền' } },
+    }, { responsive: true, displayModeBar: false });
+  };
+
+  const buttons = container.querySelectorAll('.macd5m-expand-btn');
+  buttons.forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const count = Number(btn.dataset.count);
+      const detail = container.querySelector(`.macd5m-detail-row[data-count="${count}"]`);
+      if (!detail) return;
+      const isOpen = macd5mExpandedCounts.has(count);
+      if (isOpen) macd5mExpandedCounts.delete(count);
+      else macd5mExpandedCounts.add(count);
+
+      const openNow = macd5mExpandedCounts.has(count);
+      detail.style.display = openNow ? 'table-row' : 'none';
+      btn.textContent = openNow ? '−' : '+';
+      btn.setAttribute('aria-expanded', openNow ? 'true' : 'false');
+      if (openNow) renderRowHists(count);
+    });
+  });
+
+  // Nếu đang mở sẵn (do state giữ lại), vẽ luôn chart
+  macd5mExpandedCounts.forEach(c => renderRowHists(c));
+}
+
+async function requestMacd5mAiAnalysis() {
+  const body = document.getElementById('macd5mAiBody');
+  const btn = document.getElementById('macd5mAiBtn');
+  if (!body || !btn) return;
+
+  if (!fullDatasetForRegions || fullDatasetForRegions.length === 0) {
+    body.innerHTML = '<span class="macd5m-ai-placeholder">Không có dữ liệu để phân tích.</span>';
+    return;
+  }
+
+  const selectedModel = document.getElementById('macd5mAiModel')?.value || 'gpt-4.1';
+  const isReasoning = /^(o1|o3|o4)/.test(selectedModel);
+
+  btn.disabled = true;
+  btn.textContent = 'Đang phân tích...';
+  body.innerHTML = '<span class="macd5m-ai-loading"><span class="macd5m-ai-dot"></span><span class="macd5m-ai-dot"></span><span class="macd5m-ai-dot"></span> Đang tính toán 8 kịch bản bộ lọc...</span>';
+  await new Promise(r => setTimeout(r, 50));
+
+  const pct = (arr, p) => {
+    if (!arr.length) return NaN;
+    const a = [...arr].sort((x, y) => x - y);
+    const idx = (a.length - 1) * p;
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    if (lo === hi) return a[lo];
+    return a[lo] * (1 - (idx - lo)) + a[hi] * (idx - lo);
+  };
+  const sum = arr => arr.reduce((s, x) => s + x, 0);
+  const mean = arr => arr.length ? sum(arr) / arr.length : 0;
+  const stdev = arr => {
+    if (arr.length < 2) return 0;
+    const m = mean(arr);
+    return Math.sqrt(arr.reduce((s, x) => s + (x - m) ** 2, 0) / (arr.length - 1));
+  };
+  const f = (v, d = 2) => Number.isFinite(v) ? v.toFixed(d) : '--';
+
+  const data = fullDatasetForRegions;
+  const filled = fillHistForHigherTF(data);
+  const allRegions = getRegionsForTFIndices(data, 'hist_5m');
+
+  const scenarios = [
+    { f1h: false, f4h: false, f1d: false, label: 'Không lọc (toàn bộ miền MACD 5m dương)' },
+    { f1h: true,  f4h: false, f1d: false, label: 'Lọc: MACD 1h dương' },
+    { f1h: false, f4h: true,  f1d: false, label: 'Lọc: MACD 4h dương' },
+    { f1h: false, f4h: false, f1d: true,  label: 'Lọc: MACD 1d dương' },
+    { f1h: true,  f4h: true,  f1d: false, label: 'Lọc: MACD 1h + 4h dương' },
+    { f1h: true,  f4h: false, f1d: true,  label: 'Lọc: MACD 1h + 1d dương' },
+    { f1h: false, f4h: true,  f1d: true,  label: 'Lọc: MACD 4h + 1d dương' },
+    { f1h: true,  f4h: true,  f1d: true,  label: 'Lọc: MACD 1h + 4h + 1d dương' },
+  ];
+
+  const scenarioBlocks = [];
+  for (const sc of scenarios) {
+    let regions = allRegions;
+    if (sc.f1h) regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_1h) > 0));
+    if (sc.f4h) regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_4h) > 0));
+    if (sc.f1d) regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_1d) > 0));
+
+    const meta = buildMacd5mRegionMeta(data, regions);
+    if (meta.length === 0) {
+      scenarioBlocks.push(`=== ${sc.label} ===\nSố miền: 0 (không có dữ liệu)`);
+      continue;
+    }
+
+    const cArr = meta.map(m => m.count), hArr = meta.map(m => m.highOpen), oArr = meta.map(m => m.openLow);
+    const desc = (arr, name, unit) =>
+      `${name}: mean=${f(mean(arr))}${unit}, std=${f(stdev(arr))}${unit}, min=${f(Math.min(...arr))}${unit}, P5=${f(pct(arr,0.05))}${unit}, P25=${f(pct(arr,0.25))}${unit}, median=${f(pct(arr,0.5))}${unit}, P75=${f(pct(arr,0.75))}${unit}, P95=${f(pct(arr,0.95))}${unit}, P99=${f(pct(arr,0.99))}${unit}, max=${f(Math.max(...arr))}${unit}`;
+
+    const mHO = mean(hArr), mOL = mean(oArr);
+    scenarioBlocks.push(
+      `=== ${sc.label} ===\n` +
+      `Số miền: ${meta.length}\n` +
+      `${desc(cArr, 'Số nến/miền', '')}\n` +
+      `${desc(hArr, '(High-Open)/Open%', '%')}\n` +
+      `${desc(oArr, '(Open-Low)/Open%', '%')}\n` +
+      `Kỳ vọng: HO=${f(mHO)}%, OL=${f(mOL)}%, RR=${mOL > 0 ? f(mHO / mOL) : '--'}`
+    );
+  }
+
+  body.innerHTML = `<span class="macd5m-ai-loading"><span class="macd5m-ai-dot"></span><span class="macd5m-ai-dot"></span><span class="macd5m-ai-dot"></span> Đang gửi 8 kịch bản đến ${selectedModel}${isReasoning ? ' (reasoning mode)' : ''}...</span>`;
+
+  const totalCandles = data.length.toLocaleString('vi-VN');
+
+  const systemPrompt = `Bạn là chuyên gia phân tích dữ liệu giao dịch BTCJPY. Hãy suy nghĩ từng bước (think step by step) trước khi đưa kết luận.
+
+DỮ LIỆU: Thống kê từ ${totalCandles} nến 5 phút BTCJPY. "Miền MACD 5m dương" = chuỗi nến liên tiếp có MACD histogram 5m > 0.
+- (High-Open)/Open%: mức tăng tối đa từ giá open nến đầu tiên của miền (upside)
+- (Open-Low)/Open%: mức giảm tối đa từ giá open nến đầu tiên của miền (downside/risk)
+- RR = mean(HO) / mean(OL)
+
+CÁC BỘ LỌC: Mỗi bộ lọc MACD 1h/4h/1d dương = toàn bộ nến trong miền 5m phải nằm trong vùng MACD histogram dương của TF đó. Có 8 kịch bản: không lọc, 3 bộ lọc đơn, 3 tổ hợp 2, và 1 tổ hợp 3.
+
+NHIỆM VỤ — phân tích sâu tất cả 8 kịch bản:
+
+1. **BẢNG SO SÁNH TỔNG QUAN**: So sánh 8 kịch bản — RR, mean HO%, mean OL%, số miền. Kịch bản nào tối ưu nhất?
+
+2. **PHÂN TÍCH TỪNG KỊCH BẢN**: Với mỗi kịch bản:
+   - Đặc điểm phân phối (skew, outlier, tập trung chính ở đâu)
+   - Mức TP hợp lý (dựa trên P25/P50/P75 của HO)
+   - Mức SL hợp lý (dựa trên P75/P95 của OL)
+   - Xác suất ước tính lệnh LONG thành công
+
+3. **SO SÁNH HIỆU QUẢ BỘ LỌC**:
+   - Bộ lọc đơn: 1h vs 4h vs 1d — cái nào cải thiện RR nhiều nhất?
+   - Tổ hợp 2: tổ hợp nào tốt nhất? Vì sao?
+   - Tổ hợp 3: có đáng chờ tín hiệu hoàn hảo không? Trade-off (ít tín hiệu hơn)?
+
+4. **CHIẾN LƯỢC VÀO LỆNH CỤ THỂ**: Đưa hướng dẫn rõ ràng cho từng trạng thái MACD — khi nào vào, TP, SL, size position tương đối.
+
+5. **KẾT LUẬN**: Tóm tắt chiến lược tối ưu nhất.
+
+Trả lời bằng tiếng Việt, dùng **bold** cho số liệu, *italic* cho nhận xét. Dùng ## heading cho các phần chính, ### cho phần phụ.`;
+
+  const userMsg = `Dữ liệu thống kê 8 kịch bản bộ lọc MACD (tổng ${totalCandles} nến 5m):\n\n${scenarioBlocks.join('\n\n')}`;
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMsg },
+        ],
+        max_tokens: 16000,
+        reasoning_effort: isReasoning ? 'high' : undefined,
+      }),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      let errMsg = `HTTP ${res.status}`;
+      try { errMsg = JSON.parse(errText).error || errMsg; } catch {}
+      throw new Error(errMsg);
+    }
+    const result = await res.json();
+    if (result.error) throw new Error(result.error);
+
+    let html = (result.content || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/^#### (.+)$/gm, '<h5 style="color:#b0b4bc;margin:8px 0 3px;font-size:12px">$1</h5>')
+      .replace(/^### (.+)$/gm, '<h4 style="color:#5b8def;margin:12px 0 4px;font-size:13px">$1</h4>')
+      .replace(/^## (.+)$/gm, '<h3 style="color:#ffab00;margin:16px 0 6px;font-size:14px;border-bottom:1px solid #1e222d;padding-bottom:4px">$1</h3>')
+      .replace(/^# (.+)$/gm, '<h2 style="color:#fff;margin:18px 0 8px;font-size:15px">$1</h2>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
+      .replace(/^[-–] (.+)$/gm, '<div style="padding-left:14px;margin:2px 0">• $1</div>')
+      .replace(/^\d+\. (.+)$/gm, (match, p1, offset, str) => {
+        const num = match.match(/^(\d+)/)[1];
+        return `<div style="padding-left:14px;margin:2px 0"><span style="color:#5b8def;font-weight:600">${num}.</span> ${p1}</div>`;
+      })
+      .replace(/\|(.+)\|/g, (match) => {
+        const cells = match.split('|').filter(c => c.trim());
+        if (cells.every(c => /^[\s-:]+$/.test(c))) return '';
+        const isHeader = cells.every(c => /\*\*/.test(c) || c.trim().length < 20);
+        const tag = isHeader ? 'th' : 'td';
+        const style = isHeader
+          ? 'style="padding:4px 8px;border-bottom:1px solid #2a2e39;color:#787b86;font-size:10px;text-transform:uppercase"'
+          : 'style="padding:4px 8px;border-bottom:1px solid #1a1e2a;font-size:11px"';
+        return `<tr>${cells.map(c => `<${tag} ${style}>${c.trim()}</${tag}>`).join('')}</tr>`;
+      })
+      .replace(/(<tr>.*<\/tr>\s*)+/g, (match) => `<table style="width:100%;border-collapse:collapse;margin:6px 0">${match}</table>`)
+      .replace(/\n/g, '<br>');
+
+    const usageInfo = result.usage ? (() => {
+      const u = result.usage;
+      const total = u.total_tokens || ((u.prompt_tokens || 0) + (u.completion_tokens || 0));
+      const reasoning = u.completion_tokens_details?.reasoning_tokens;
+      return `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #1e222d;font-size:10px;color:#787b86">` +
+        `Model: ${result.model || selectedModel} | Tokens: ${total.toLocaleString('vi-VN')}` +
+        (reasoning ? ` (reasoning: ${reasoning.toLocaleString('vi-VN')})` : '') +
+        `</div>`;
+    })() : '';
+
+    body.innerHTML = `<div style="max-height:600px;overflow-y:auto;padding-right:6px">${html}</div>${usageInfo}`;
+  } catch (err) {
+    body.innerHTML = `<span style="color:#ef5350">Lỗi phân tích: ${err.message}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Phân tích 8 kịch bản';
+  }
 }
 
 function renderMacd5mThreeCharts() {

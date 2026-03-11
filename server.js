@@ -68,7 +68,7 @@ app.get('/api/btcjpy/latest', async (req, res) => {
 
 app.post('/api/chat', async (req, res) => {
   try {
-    const { model, messages } = req.body;
+    const { model, messages, max_tokens, reasoning_effort } = req.body;
     const apiKey = process.env.AI_API_KEY;
     const baseUrl = (process.env.AI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
 
@@ -77,7 +77,22 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const url = `${baseUrl}/chat/completions`;
-    console.log(`[Chat] POST ${url} | model=${model}`);
+    const selectedModel = model || 'gpt-4o-mini';
+    const isReasoningModel = /^(o1|o3|o4)/.test(selectedModel);
+
+    console.log(`[Chat] POST ${url} | model=${selectedModel} | reasoning=${isReasoningModel}`);
+
+    const payload = { model: selectedModel };
+
+    if (isReasoningModel) {
+      payload.messages = messages.map(m => m.role === 'system' ? { ...m, role: 'developer' } : m);
+      payload.max_completion_tokens = max_tokens || 16000;
+      if (reasoning_effort) payload.reasoning_effort = reasoning_effort;
+    } else {
+      payload.messages = messages;
+      payload.temperature = 0.7;
+      payload.max_tokens = max_tokens || 4096;
+    }
 
     const response = await fetch(url, {
       method: 'POST',
@@ -85,12 +100,7 @@ app.post('/api/chat', async (req, res) => {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model: model || 'gemini-2.0-flash',
-        messages,
-        temperature: 0.7,
-        max_tokens: 2048,
-      }),
+      body: JSON.stringify(payload),
     });
 
     const responseText = await response.text();
