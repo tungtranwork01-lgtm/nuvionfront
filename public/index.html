@@ -115,7 +115,28 @@
       border-radius: 0 0 6px 6px;
       padding: 10px;
     }
+    .stats-section.collapsed .stats-body { display: none; }
+    .stats-section.collapsed .stats-title { border-radius: 6px; border-bottom: 1px solid #1e222d; }
+    .section-toggle-btn {
+      background: transparent; border: 1px solid #2a2e39; color: #787b86;
+      width: 24px; height: 24px; padding: 0; border-radius: 4px;
+      cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; line-height: 1; transition: transform 0.2s, background 0.2s, color 0.2s;
+    }
+    .section-toggle-btn:hover { background: #2a2e39; color: #d1d4dc; }
+    .section-toggle-btn .arrow { display: inline-block; transition: transform 0.2s; }
+    .stats-section.collapsed .section-toggle-btn .arrow { transform: rotate(-90deg); }
 
+    .account-mgmt-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+    .account-mgmt-table th, .account-mgmt-table td { padding: 4px 6px; text-align: right; border-bottom: 1px solid #1e222d; }
+    .account-mgmt-table th:first-child, .account-mgmt-table td:first-child { text-align: left; }
+    .account-mgmt-table th { color: #787b86; font-weight: 600; font-size: 10px; text-transform: uppercase; }
+    .account-mgmt-table tr:hover td { background: #161b22; }
+    .account-trades-table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 6px; max-height: 200px; overflow: auto; }
+    .account-trades-table th, .account-trades-table td { padding: 3px 6px; text-align: right; border-bottom: 1px solid #1e222d; }
+    .account-trades-table th:first-child, .account-trades-table td:first-child { text-align: left; }
+    .account-trades-table th { color: #787b86; font-weight: 600; font-size: 9px; text-transform: uppercase; }
+    .account-trades-table tr:hover td { background: #161b22; }
 
     /* TF Table */
     .tf-table { width: 100%; border-collapse: collapse; font-size: 11px; }
@@ -306,8 +327,11 @@
     <div class="right-panel" id="rightPanel">
 
       <!-- Miền Histogram MACD 5m -->
-      <div class="stats-section" id="macd5mRegionsSection">
-        <div class="stats-title">Miền Histogram MACD 5m</div>
+      <div class="stats-section collapsed" id="macd5mRegionsSection">
+        <div class="stats-title">
+          <span>Miền Histogram MACD 5m</span>
+          <button type="button" class="section-toggle-btn" id="toggleMacd5mRegions" aria-label="Thu gọn / Mở rộng" title="Thu gọn / Mở rộng"><span class="arrow">▼</span></button>
+        </div>
         <div class="stats-body">
           <div id="macd5mRegionsStat" style="margin-bottom:6px;font-size:12px;color:#787b86">Đang tải toàn bộ dữ liệu BTCJPY (~200.000 nến)...</div>
           <div class="macd5m-filters" style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
@@ -326,12 +350,46 @@
       </div>
 
       <!-- 3D MACD Histogram (top) -->
-      <div class="stats-section">
-        <div class="stats-title">MACD Histogram 3D (200 nến gần nhất)
-          <button class="btn" id="replayBtn" style="padding:2px 8px;font-size:11px">&#9654; Replay</button>
+      <div class="stats-section collapsed" id="hist3dSection">
+        <div class="stats-title">
+          <span>MACD Histogram 3D (200 nến gần nhất)</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="btn" id="replayBtn" style="padding:2px 8px;font-size:11px">&#9654; Replay</button>
+            <button type="button" class="section-toggle-btn" id="toggleHist3d" aria-label="Thu gọn / Mở rộng" title="Thu gọn / Mở rộng"><span class="arrow">▼</span></button>
+          </div>
         </div>
         <div class="stats-body" style="padding:0;overflow:hidden;border-radius:0 0 6px 6px">
           <div id="hist3dChart" style="width:100%;height:520px"></div>
+        </div>
+      </div>
+
+      <!-- Quản lý tài khoản -->
+      <div class="stats-section collapsed" id="accountMgmtSection">
+        <div class="stats-title">
+          <span>Quản lý tài khoản</span>
+          <button type="button" class="section-toggle-btn" id="toggleAccountMgmt" aria-label="Thu gọn / Mở rộng" title="Thu gọn / Mở rộng"><span class="arrow">▼</span></button>
+        </div>
+        <div class="stats-body">
+          <div class="account-mgmt-row" style="margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <label class="account-mgmt-label" style="font-size:11px;color:#787b86">Tài khoản:</label>
+            <select id="accountSelect" class="account-select" style="min-width:180px;padding:4px 8px;background:#161b22;border:1px solid #1e222d;border-radius:4px;color:#d1d4dc;font-size:12px">
+              <option value="">-- Chọn tài khoản --</option>
+            </select>
+          </div>
+          <div class="account-balance-block" style="margin-bottom:14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <span class="account-mgmt-label" style="font-size:10px;color:#787b86;text-transform:uppercase">Số dư (BTC, USDT, FDUSD, JPY)</span>
+              <button type="button" class="btn" id="accountRefreshBalance" style="padding:2px 8px;font-size:11px">Làm mới số dư</button>
+            </div>
+            <div id="accountBalanceContent" style="font-size:12px;color:#787b86">Chọn tài khoản và bấm &quot;Làm mới số dư&quot;.</div>
+          </div>
+          <div class="account-trades-block">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <span class="account-mgmt-label" style="font-size:10px;color:#787b86;text-transform:uppercase">Lịch sử giao dịch</span>
+              <button type="button" class="btn" id="accountRefreshTrades" style="padding:2px 8px;font-size:11px">Làm mới lịch sử</button>
+            </div>
+            <div id="accountTradesContent" style="font-size:11px;color:#787b86">Chọn tài khoản và bấm &quot;Làm mới lịch sử&quot;.</div>
+          </div>
         </div>
       </div>
 
@@ -1704,6 +1762,94 @@ function init() {
 
   document.getElementById('refreshBtn').addEventListener('click', loadData);
   document.getElementById('replayBtn').addEventListener('click', toggleReplay);
+
+  // Mở rộng / Thu gọn section
+  function toggleSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    if (section) section.classList.toggle('collapsed');
+  }
+  document.getElementById('toggleMacd5mRegions').addEventListener('click', () => toggleSection('macd5mRegionsSection'));
+  document.getElementById('toggleHist3d').addEventListener('click', () => toggleSection('hist3dSection'));
+  document.getElementById('toggleAccountMgmt').addEventListener('click', () => toggleSection('accountMgmtSection'));
+
+  // Quản lý tài khoản: load danh sách, refresh số dư, refresh lịch sử
+  (function accountMgmt() {
+    const accountSelect = document.getElementById('accountSelect');
+    const balanceContent = document.getElementById('accountBalanceContent');
+    const tradesContent = document.getElementById('accountTradesContent');
+    const refreshBalanceBtn = document.getElementById('accountRefreshBalance');
+    const refreshTradesBtn = document.getElementById('accountRefreshTrades');
+
+    async function loadAccounts() {
+      try {
+        const res = await fetch('/api/accounts');
+        let body = {};
+        try {
+          body = await res.json();
+        } catch (_) {
+          throw new Error(res.status === 404 ? 'API không tồn tại. Chạy server (npm start).' : 'Phản hồi không hợp lệ');
+        }
+        const data = body.data;
+        const errMsg = body.error || body.message || 'Lỗi tải danh sách';
+        if (!res.ok) throw new Error(errMsg);
+        accountSelect.innerHTML = '<option value="">-- Chọn tài khoản --</option>' +
+          (data || []).map((a) => `<option value="${a.id}">${(a.Name || a.name || 'Account') + ' (' + (a.Platform || a.platform || '') + ')'}</option>`).join('');
+        if ((data || []).length === 0) balanceContent.textContent = 'Chưa có tài khoản. Thêm tài khoản trong Supabase (bảng api_account).';
+        else balanceContent.textContent = 'Chọn tài khoản và bấm "Làm mới số dư".';
+      } catch (e) {
+        accountSelect.innerHTML = '<option value="">-- Lỗi tải --</option>';
+        balanceContent.textContent = 'Không tải được danh sách tài khoản: ' + (e.message || 'Lỗi mạng hoặc server chưa chạy.');
+      }
+    }
+
+    refreshBalanceBtn.addEventListener('click', async () => {
+      const id = accountSelect.value;
+      if (!id) { balanceContent.textContent = 'Chọn tài khoản trước.'; return; }
+      balanceContent.textContent = 'Đang tải...';
+      try {
+        const res = await fetch(`/api/accounts/${id}/balance`);
+        const { data, error } = await res.json();
+        if (!res.ok) throw new Error(error || 'Lỗi');
+        const rows = (data.balances || []).map((b) =>
+          `<tr><td>${b.asset}</td><td>${Number(b.total).toLocaleString('en-US', { maximumFractionDigits: 8 })}</td><td>${Number(b.usdtValue).toLocaleString('en-US', { maximumFractionDigits: 2 })} USDT</td></tr>`
+        ).join('');
+        balanceContent.innerHTML = `<div style="margin-bottom:4px;color:#d1d4dc">Tổng quy đổi: <strong>${Number(data.totalUsdt || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} USDT</strong></div>
+          <table class="account-mgmt-table"><thead><tr><th>Tài sản</th><th>Số lượng</th><th>Quy đổi USDT</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Không có số dư</td></tr>'}</tbody></table>`;
+      } catch (e) {
+        balanceContent.textContent = 'Lỗi: ' + (e.message || 'Không lấy được số dư');
+      }
+    });
+
+    refreshTradesBtn.addEventListener('click', async () => {
+      const id = accountSelect.value;
+      if (!id) { tradesContent.textContent = 'Chọn tài khoản trước.'; return; }
+      tradesContent.textContent = 'Đang tải...';
+      try {
+        const res = await fetch(`/api/accounts/${id}/trades`);
+        const { data, error } = await res.json();
+        if (!res.ok) throw new Error(error || 'Lỗi');
+        const list = Array.isArray(data) ? data : [];
+        if (list.length === 0) {
+          tradesContent.innerHTML = '<span>Không có giao dịch nào (4 tài sản: BTC, USDT, FDUSD, JPY).</span>';
+          return;
+        }
+        const rows = list.slice(0, 100).map((t) => {
+          const time = t.time ? new Date(t.time).toLocaleString('vi-VN') : '--';
+          const side = (t.side || '').toLowerCase();
+          const qty = Number(t.qty || 0);
+          const quoteQty = Number(t.quoteQty || 0);
+          const price = t.price ? Number(t.price) : (qty ? quoteQty / qty : '--');
+          return `<tr><td>${time}</td><td>${t.symbol || ''}</td><td style="color:${side === 'buy' ? '#26a69a' : '#ef5350'}">${(t.side || '')}</td><td>${qty}</td><td>${Number(price).toLocaleString('en-US', { maximumFractionDigits: 8 })}</td><td>${Number(quoteQty).toLocaleString('en-US', { maximumFractionDigits: 2 })}</td></tr>`;
+        }).join('');
+        tradesContent.innerHTML = `<table class="account-trades-table"><thead><tr><th>Thời gian</th><th>Cặp</th><th>Loại</th><th>Số lượng</th><th>Giá</th><th>Quote</th></tr></thead><tbody>${rows}</tbody></table>`;
+      } catch (e) {
+        tradesContent.textContent = 'Lỗi: ' + (e.message || 'Không lấy được lịch sử');
+      }
+    });
+
+    loadAccounts();
+  })();
+
   window.addEventListener('resize', handleResize);
   loadData();
   fetchFullDatasetForRegions();
