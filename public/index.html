@@ -335,9 +335,22 @@
         <div class="stats-body">
           <div id="macd5mRegionsStat" style="margin-bottom:6px;font-size:12px;color:#787b86">Đang tải toàn bộ dữ liệu BTCJPY (~200.000 nến)...</div>
           <div class="macd5m-filters" style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-            <label class="filter-cb"><input type="checkbox" id="macd5mFilter1h" /> Chỉ miền nằm trong MACD 1h dương</label>
-            <label class="filter-cb"><input type="checkbox" id="macd5mFilter4h" /> Chỉ miền nằm trong MACD 4h dương</label>
-            <label class="filter-cb"><input type="checkbox" id="macd5mFilter1d" /> Chỉ miền nằm trong MACD 1d dương</label>
+            <span style="font-size:11px;color:#787b86">Lọc theo MACD TF:</span>
+            <select id="macd5mFilter1h" class="macd5m-filter-select" style="min-width:180px;padding:4px 8px;background:#161b22;border:1px solid #1e222d;border-radius:4px;color:#d1d4dc;font-size:12px">
+              <option value="">Không lọc 1h</option>
+              <option value="positive">Chỉ miền trong MACD 1h dương</option>
+              <option value="negative">Chỉ miền trong MACD 1h âm</option>
+            </select>
+            <select id="macd5mFilter4h" class="macd5m-filter-select" style="min-width:180px;padding:4px 8px;background:#161b22;border:1px solid #1e222d;border-radius:4px;color:#d1d4dc;font-size:12px">
+              <option value="">Không lọc 4h</option>
+              <option value="positive">Chỉ miền trong MACD 4h dương</option>
+              <option value="negative">Chỉ miền trong MACD 4h âm</option>
+            </select>
+            <select id="macd5mFilter1d" class="macd5m-filter-select" style="min-width:180px;padding:4px 8px;background:#161b22;border:1px solid #1e222d;border-radius:4px;color:#d1d4dc;font-size:12px">
+              <option value="">Không lọc 1d</option>
+              <option value="positive">Chỉ miền trong MACD 1d dương</option>
+              <option value="negative">Chỉ miền trong MACD 1d âm</option>
+            </select>
             <button type="button" class="btn" id="macd5mClearCrossFilter" style="margin-left:8px;font-size:11px">Xóa cross-filter</button>
           </div>
           <div class="macd5m-three-charts" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
@@ -997,11 +1010,12 @@ let macd5mBinRanges = { candles: null, highOpen: null, openLow: null };
 let macd5mActiveCrossFilter = { candles: null, highOpen: null, openLow: null };
 let macd5mExpandedCounts = new Set();
 
+/** Trả về bộ lọc MACD TF: mỗi key '1h'|'4h'|'1d' có giá trị '' (không lọc), 'positive' (chỉ dương), 'negative' (chỉ âm). */
 function getMacd5mRegionFilters() {
   return {
-    '1h': document.getElementById('macd5mFilter1h')?.checked ?? false,
-    '4h': document.getElementById('macd5mFilter4h')?.checked ?? false,
-    '1d': document.getElementById('macd5mFilter1d')?.checked ?? false,
+    '1h': (document.getElementById('macd5mFilter1h')?.value || '').trim() || '',
+    '4h': (document.getElementById('macd5mFilter4h')?.value || '').trim() || '',
+    '1d': (document.getElementById('macd5mFilter1d')?.value || '').trim() || '',
   };
 }
 
@@ -1539,18 +1553,24 @@ function updateMacd5mRegionsUI(data) {
 
   if (filters['1h'] || filters['4h'] || filters['1d']) {
     const filled = fillHistForHigherTF(data);
-    if (filters['1h']) regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_1h) > 0));
-    if (filters['4h']) regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_4h) > 0));
-    if (filters['1d']) regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_1d) > 0));
+    if (filters['1h'] === 'positive') regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_1h) > 0));
+    if (filters['1h'] === 'negative') regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_1h) < 0));
+    if (filters['4h'] === 'positive') regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_4h) > 0));
+    if (filters['4h'] === 'negative') regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_4h) < 0));
+    if (filters['1d'] === 'positive') regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_1d) > 0));
+    if (filters['1d'] === 'negative') regions = regions.filter(idx => idx.every(i => Number(filled[i].hist_1d) < 0));
   }
 
   const count = regions.length;
   macd5mFullMeta = buildMacd5mRegionMeta(data, regions);
   const n = data.length.toLocaleString('vi-VN');
   const filterLabel = [];
-  if (filters['1h']) filterLabel.push('1h dương');
-  if (filters['4h']) filterLabel.push('4h dương');
-  if (filters['1d']) filterLabel.push('1d dương');
+  if (filters['1h'] === 'positive') filterLabel.push('1h dương');
+  if (filters['1h'] === 'negative') filterLabel.push('1h âm');
+  if (filters['4h'] === 'positive') filterLabel.push('4h dương');
+  if (filters['4h'] === 'negative') filterLabel.push('4h âm');
+  if (filters['1d'] === 'positive') filterLabel.push('1d dương');
+  if (filters['1d'] === 'negative') filterLabel.push('1d âm');
   const filterSuffix = filterLabel.length > 0 ? ` <span style="color:#787b86">(lọc: ${filterLabel.join(', ')})</span>` : '';
   elStat.innerHTML = `Toàn bộ tập dữ liệu BTCJPY: <strong style="color:#d1d4dc">${n}</strong> nến, có <strong style="color:#26a69a">${count.toLocaleString('vi-VN')}</strong> miền histogram MACD 5m dương.${filterSuffix}<span id="macd5mCrossFilterStat"></span>`;
 
