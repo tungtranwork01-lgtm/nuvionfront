@@ -201,7 +201,16 @@
       font-size: 11px;
     }
     .macd5m-table th:first-child, .macd5m-table td:first-child { text-align: left; }
-    .macd5m-table th { color: #787b86; font-weight: 600; font-size: 10px; text-transform: uppercase; }
+    .macd5m-table th {
+      color: #787b86;
+      font-weight: 600;
+      font-size: 10px;
+      text-transform: uppercase;
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      background: #0f1420;
+    }
     .macd5m-table tr:last-child td { border-bottom: none; }
 
     .macd5m-expand-btn{
@@ -983,8 +992,6 @@ function updateRegionStatsUI(data) {
 }
 
 async function fetchFullDatasetForRegions() {
-  if (fullRegionFetchStarted) return;
-  fullRegionFetchStarted = true;
   const elStat = document.getElementById('histPositiveRegionsStat');
   const el5m = document.getElementById('macd5mRegionsStat');
   if (elStat) elStat.innerHTML = '<span style="color:#787b86">Đang tải thống kê toàn bộ bảng BTCJPY (~200k nến)...</span>';
@@ -994,6 +1001,7 @@ async function fetchFullDatasetForRegions() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     fullDatasetForRegions = json.data || [];
+    fullRegionFetchStarted = true;
     updateRegionStatsUI(fullDatasetForRegions);
     updateMacd5mRegionsUI(fullDatasetForRegions);
     bindMacd5mRegionFilterHandlers();
@@ -1009,6 +1017,26 @@ let macd5mFullMeta = [];
 let macd5mBinRanges = { candles: null, highOpen: null, openLow: null };
 let macd5mActiveCrossFilter = { candles: null, highOpen: null, openLow: null };
 let macd5mExpandedCounts = new Set();
+let macd5mTableCollapsed = false;
+let macd5mCurrentPositiveCount = null;
+let macd5mLastAutoExpandedCount = null;
+
+/** Tự đồng bộ select bộ lọc theo dấu MACD hiện tại của 1h/4h/1d. */
+function syncMacd5mRegionFiltersToCurrentState(data) {
+  if (!Array.isArray(data) || data.length === 0) return;
+  const last = data[data.length - 1] || {};
+  const map = [
+    ['macd5mFilter1h', Number(last.hist_1h)],
+    ['macd5mFilter4h', Number(last.hist_4h)],
+    ['macd5mFilter1d', Number(last.hist_1d)],
+  ];
+  map.forEach(([id, value]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const next = value > 0 ? 'positive' : value < 0 ? 'negative' : '';
+    if (el.value !== next) el.value = next;
+  });
+}
 
 /** Trả về bộ lọc MACD TF: mỗi key '1h'|'4h'|'1d' có giá trị '' (không lọc), 'positive' (chỉ dương), 'negative' (chỉ âm). */
 function getMacd5mRegionFilters() {
@@ -1017,6 +1045,18 @@ function getMacd5mRegionFilters() {
     '4h': (document.getElementById('macd5mFilter4h')?.value || '').trim() || '',
     '1d': (document.getElementById('macd5mFilter1d')?.value || '').trim() || '',
   };
+}
+
+/** Đếm số nến 5m dương liên tiếp tính từ nến mới nhất. */
+function getCurrentMacd5mPositiveCount(data) {
+  if (!Array.isArray(data) || data.length === 0) return null;
+  let count = 0;
+  for (let i = data.length - 1; i >= 0; i--) {
+    const h = Number(data[i].hist_5m) || 0;
+    if (h > 0) count++;
+    else break;
+  }
+  return count > 0 ? count : null;
 }
 
 /** Đếm values rơi vào từng bin [a,b). Giá trị ngoài khoảng gộp vào bin cuối. */
@@ -1098,6 +1138,7 @@ function renderMacd5mTable(filteredMeta) {
   });
 
   const sorted = Array.from(groups.values()).sort((a, b) => a.count - b.count);
+  const targetCount = macd5mCurrentPositiveCount;
 
   let rows = '';
   sorted.forEach(g => {
@@ -1105,6 +1146,11 @@ function renderMacd5mTable(filteredMeta) {
     const avgOpenLow = g.sumOL / g.n;
     const rrPerRow = avgOpenLow > 0 ? (avgHighOpen / avgOpenLow) : null;
     const expanded = macd5mExpandedCounts.has(g.count);
+    const isCurrent = targetCount != null && g.count === targetCount;
+    const rowStyle = isCurrent
+      ? 'background:rgba(38,166,154,0.10);color:#26a69a;font-weight:700'
+      : '';
+    const countStyle = isCurrent ? 'color:#26a69a;font-weight:800' : '';
     const btn = `<button type="button" class="macd5m-expand-btn" data-count="${g.count}" aria-expanded="${expanded ? 'true' : 'false'}">${expanded ? '−' : '+'}</button>`;
     const detailRow = `
       <tr class="macd5m-detail-row" data-count="${g.count}" style="display:${expanded ? 'table-row' : 'none'}">
@@ -1122,9 +1168,9 @@ function renderMacd5mTable(filteredMeta) {
         </td>
       </tr>
     `;
-    rows += `<tr data-count="${g.count}">
+    rows += `<tr data-count="${g.count}" style="${rowStyle}">
       <td class="macd5m-expand-cell">${btn}</td>
-      <td>${g.count}</td>
+      <td style="${countStyle}">${g.count}</td>
       <td>${g.n.toLocaleString('vi-VN')}</td>
       <td>${avgHighOpen.toFixed(2)}%</td>
       <td>${avgOpenLow.toFixed(2)}%</td>
@@ -1136,6 +1182,8 @@ function renderMacd5mTable(filteredMeta) {
     container.innerHTML = '<span style="color:#787b86">Không có dữ liệu cho bảng.</span>';
     return;
   }
+
+  if (targetCount != null) macd5mExpandedCounts.add(targetCount);
 
   const totalRegions = filteredMeta.length;
   const expectedHighOpen = filteredMeta.reduce((s, m) => s + m.highOpen, 0) / totalRegions;
@@ -1168,7 +1216,17 @@ function renderMacd5mTable(filteredMeta) {
     </tr>`;
   });
 
+  const topNotice = macd5mCurrentPositiveCount == null
+    ? '<div style="margin-bottom:8px;padding:6px 8px;border:1px solid #3a1f1f;background:#241818;color:#ff7a7a;border-radius:4px;font-size:11px;font-weight:600">Miền MACD đang âm</div>'
+    : '';
+
   container.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+      <div style="font-size:11px;color:#787b86">Bảng chi tiết số nến dương / miền</div>
+      <button type="button" class="btn" id="macd5mToggleTableBtn" style="padding:2px 8px;font-size:11px">${macd5mTableCollapsed ? 'Mở rộng bảng' : 'Thu hẹp bảng'}</button>
+    </div>
+    ${topNotice}
+    <div class="macd5m-table-scroll" style="max-height:420px; overflow-y:auto; padding-right:4px;">
     <table class="macd5m-table">
       <thead>
         <tr>
@@ -1190,6 +1248,7 @@ function renderMacd5mTable(filteredMeta) {
         </tr>
       </tbody>
     </table>
+    </div>
     <div class="macd5m-ci-wrap">
       <div class="macd5m-ci-title">Khoảng dao động theo confidence level (percentile) <span class="macd5m-ci-subtle">(n = ${nRegionsStr} miền)</span></div>
       <table class="macd5m-ci-table">
@@ -1224,6 +1283,26 @@ function renderMacd5mTable(filteredMeta) {
       </div>
     </div>
   `;
+
+  const toggleBtn = document.getElementById('macd5mToggleTableBtn');
+  const tableEl = container.querySelector('.macd5m-table');
+  const ciEl = container.querySelector('.macd5m-ci-wrap');
+  const aiEl = container.querySelector('.macd5m-ai-wrap');
+  const applyCollapse = () => {
+    const hidden = macd5mTableCollapsed;
+    if (tableEl) tableEl.style.display = hidden ? 'none' : '';
+    if (ciEl) ciEl.style.display = hidden ? 'none' : '';
+    if (aiEl) aiEl.style.display = hidden ? 'none' : '';
+    if (toggleBtn) toggleBtn.textContent = hidden ? 'Mở rộng bảng' : 'Thu hẹp bảng';
+  };
+  if (toggleBtn && !toggleBtn.dataset.bound) {
+    toggleBtn.dataset.bound = '1';
+    toggleBtn.addEventListener('click', () => {
+      macd5mTableCollapsed = !macd5mTableCollapsed;
+      applyCollapse();
+    });
+  }
+  applyCollapse();
 
   // Bind AI analysis button
   const aiBtn = document.getElementById('macd5mAiBtn');
@@ -1548,6 +1627,19 @@ function updateMacd5mRegionsUI(data) {
     macd5mBinRanges = { candles: null, highOpen: null, openLow: null };
     return;
   }
+
+  syncMacd5mRegionFiltersToCurrentState(data);
+  const nextCurrentCount = getCurrentMacd5mPositiveCount(data);
+  if (macd5mLastAutoExpandedCount != null && macd5mLastAutoExpandedCount !== nextCurrentCount) {
+    macd5mExpandedCounts.delete(macd5mLastAutoExpandedCount);
+  }
+  macd5mCurrentPositiveCount = nextCurrentCount;
+  if (macd5mCurrentPositiveCount != null) {
+    macd5mExpandedCounts.add(macd5mCurrentPositiveCount);
+    macd5mLastAutoExpandedCount = macd5mCurrentPositiveCount;
+  } else {
+    macd5mLastAutoExpandedCount = null;
+  }
   const filters = getMacd5mRegionFilters();
   let regions = getRegionsForTFIndices(data, 'hist_5m');
 
@@ -1589,6 +1681,13 @@ function updateMacd5mRegionsUI(data) {
     openLow: buildHistogramBucketsPercent(lVals, MACD5M_REGION_BINS),
   };
   renderMacd5mThreeCharts();
+
+  if (macd5mCurrentPositiveCount != null) {
+    requestAnimationFrame(() => {
+      const row = document.querySelector(`.macd5m-detail-row[data-count="${macd5mCurrentPositiveCount}"]`);
+      if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  }
 }
 
 function applyMacd5mCrossFilter(dim, range) {
@@ -1743,6 +1842,7 @@ async function loadData() {
   try {
     const result = await fetchData(currentLimit);
     updateCharts(result.data);
+    fetchFullDatasetForRegions();
     mainChart.timeScale().fitContent();
     Object.values(macdCharts).forEach(c => c.timeScale().fitContent());
   } catch (err) {
