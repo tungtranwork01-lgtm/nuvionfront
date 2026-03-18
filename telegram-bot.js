@@ -1,6 +1,5 @@
 const TelegramBot = require('node-telegram-bot-api');
 const crypto = require('crypto');
-const startMacdMonitor = require('./macd-monitor');
 
 const BINANCE_MAINNET = 'https://api.binance.com';
 const BINANCE_TESTNET = 'https://testnet.binance.vision';
@@ -122,52 +121,6 @@ const TOOLS = [
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'monitor_status',
-      description: 'Xem trạng thái MACD Monitor: bật/tắt, auto-order, số subscriber, tín hiệu gần nhất.',
-      parameters: { type: 'object', properties: {}, required: [] },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'monitor_subscribe',
-      description: 'Bật hoặc tắt nhận thông báo MACD 5m crossover cho chat hiện tại.',
-      parameters: {
-        type: 'object',
-        properties: {
-          enabled: { type: 'boolean', description: 'true = bật nhận thông báo, false = tắt' },
-        },
-        required: ['enabled'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'monitor_auto_order',
-      description: 'Bật/tắt tự động đặt lệnh khi có tín hiệu MACD crossover. Có thể cấu hình symbol và quantity.',
-      parameters: {
-        type: 'object',
-        properties: {
-          enabled: { type: 'boolean', description: 'true = bật auto-order, false = tắt' },
-          symbol: { type: 'string', description: 'Cặp giao dịch cho auto-order (mặc định BTCUSDT)' },
-          quantity: { type: 'number', description: 'Số lượng BTC mỗi lệnh (mặc định 0.001)' },
-        },
-        required: ['enabled'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'monitor_last_signal',
-      description: 'Xem chi tiết tín hiệu MACD crossover gần nhất: giá, TP, SL, phân tích AI.',
-      parameters: { type: 'object', properties: {}, required: [] },
-    },
-  },
 ];
 
 const SYSTEM_PROMPT = `Bạn là trợ lý giao dịch crypto thông minh tên Nuvion Bot. Bạn có thể:
@@ -176,13 +129,6 @@ const SYSTEM_PROMPT = `Bạn là trợ lý giao dịch crypto thông minh tên N
 - Lấy giá crypto hiện tại
 - Đặt lệnh mua/bán (MARKET hoặc LIMIT)
 - Xem và huỷ lệnh đang mở
-- Quản lý MACD Monitor: bật/tắt thông báo MACD 5m crossover, bật/tắt auto-order, xem tín hiệu gần nhất
-
-MACD Monitor:
-- Khi MACD histogram 5m chuyển từ âm sang dương (bắt đầu miền dương mới), hệ thống tự động thông báo qua Telegram.
-- Thông báo gồm: giá Open, trạng thái MACD 1h/4h/1d, thống kê lịch sử (Kỳ vọng High-Open/Open %), TP/SL gợi ý, và phân tích AI.
-- Auto-order: tự động đặt lệnh MARKET BUY + LIMIT SELL (TP) khi có tín hiệu.
-- Dùng monitor_subscribe để bật/tắt thông báo, monitor_auto_order để bật/tắt đặt lệnh tự động.
 
 Quy tắc quan trọng:
 1. Khi user yêu cầu mua/bán, LUÔN xác nhận lại chi tiết (symbol, side, quantity, giá) trước khi đặt lệnh.
@@ -207,8 +153,6 @@ module.exports = function startTelegramBot(supabase) {
 
   const bot = new TelegramBot(token, { polling: true });
   console.log('[TelegramBot] Bot đã khởi động, đang polling...');
-
-  const monitor = startMacdMonitor(supabase, bot);
 
   async function getAccount(accountId) {
     let q = supabase.from('api_account').select('id, config, "Name", "Platform"');
@@ -345,23 +289,6 @@ module.exports = function startTelegramBot(supabase) {
     place_order: toolPlaceOrder,
     get_open_orders: toolGetOpenOrders,
     cancel_order: toolCancelOrder,
-    monitor_status: async () => JSON.stringify(monitor.getStatus()),
-    monitor_subscribe: async (args, chatId) => {
-      if (args.enabled) monitor.subscribe(chatId);
-      else monitor.unsubscribe(chatId);
-      return JSON.stringify({ success: true, subscribed: args.enabled });
-    },
-    monitor_auto_order: async (args) => {
-      monitor.setAutoOrder(args.enabled);
-      if (args.symbol || args.quantity) {
-        monitor.setOrderConfig({ symbol: args.symbol, quantity: args.quantity });
-      }
-      return JSON.stringify({ success: true, ...monitor.getStatus() });
-    },
-    monitor_last_signal: async () => {
-      const sig = monitor.getLastSignal();
-      return JSON.stringify(sig || { message: 'Chưa có tín hiệu crossover nào.' });
-    },
   };
 
   let dbAvailable = true;
@@ -504,7 +431,7 @@ module.exports = function startTelegramBot(supabase) {
         try {
           const handler = toolHandlers[fn];
           if (!handler) throw new Error(`Không có tool: ${fn}`);
-          result = await handler(args, chatId);
+          result = await handler(args);
           console.log(`[TelegramBot] Tool ${fn} OK, result_len=${result.length}`);
         } catch (e) {
           console.error(`[TelegramBot] Tool ${fn} ERROR:`, e.message);
@@ -519,91 +446,6 @@ module.exports = function startTelegramBot(supabase) {
     return fallback;
   }
 
-  function handleMonitorCommand(chatId, text) {
-    const parts = text.trim().split(/\s+/);
-    const sub = (parts[1] || '').toLowerCase();
-    const sub2 = (parts[2] || '').toLowerCase();
-
-    if (sub === 'on') {
-      monitor.subscribe(chatId);
-      bot.sendMessage(chatId, '✅ *MACD Monitor:* Đã bật thông báo cho chat này.\n\nBạn sẽ nhận thông báo mỗi khi MACD histogram 5m chuyển từ âm sang dương.', { parse_mode: 'Markdown' });
-      return;
-    }
-
-    if (sub === 'off') {
-      monitor.unsubscribe(chatId);
-      bot.sendMessage(chatId, '🔕 *MACD Monitor:* Đã tắt thông báo cho chat này.', { parse_mode: 'Markdown' });
-      return;
-    }
-
-    if (sub === 'auto') {
-      if (sub2 === 'on') {
-        monitor.setAutoOrder(true);
-        bot.sendMessage(chatId, '✅ *Auto-Order:* Đã bật đặt lệnh tự động.\n\nKhi có tín hiệu crossover, hệ thống sẽ tự động đặt MARKET BUY + LIMIT SELL (TP).', { parse_mode: 'Markdown' });
-      } else if (sub2 === 'off') {
-        monitor.setAutoOrder(false);
-        bot.sendMessage(chatId, '🔕 *Auto-Order:* Đã tắt đặt lệnh tự động.', { parse_mode: 'Markdown' });
-      } else {
-        bot.sendMessage(chatId, '⚙️ Dùng: `/monitor auto on` hoặc `/monitor auto off`', { parse_mode: 'Markdown' });
-      }
-      return;
-    }
-
-    if (sub === 'symbol') {
-      const sym = (parts[2] || '').toUpperCase();
-      if (!sym) {
-        bot.sendMessage(chatId, '⚙️ Dùng: `/monitor symbol BTCUSDT`', { parse_mode: 'Markdown' });
-        return;
-      }
-      monitor.setOrderConfig({ symbol: sym });
-      bot.sendMessage(chatId, `✅ Symbol auto-order: *${sym}*`, { parse_mode: 'Markdown' });
-      return;
-    }
-
-    if (sub === 'qty') {
-      const qty = parseFloat(parts[2]);
-      if (!qty || qty <= 0) {
-        bot.sendMessage(chatId, '⚙️ Dùng: `/monitor qty 0.001`', { parse_mode: 'Markdown' });
-        return;
-      }
-      monitor.setOrderConfig({ quantity: qty });
-      bot.sendMessage(chatId, `✅ Quantity auto-order: *${qty}*`, { parse_mode: 'Markdown' });
-      return;
-    }
-
-    const st = monitor.getStatus();
-    const subscribed = monitor.isSubscribed(chatId);
-    const sig = monitor.getLastSignal();
-
-    let m = '📊 *MACD Monitor Status*\n';
-    m += '━━━━━━━━━━━━━━━━━━━━━\n';
-    m += `├ Engine: ${st.running ? '🟢 Đang chạy' : '⚪ Dừng'}\n`;
-    m += `├ Thông báo: ${subscribed ? '🔔 Bật' : '🔕 Tắt'}\n`;
-    m += `├ Auto-order: ${st.autoOrder ? '✅ Bật' : '❌ Tắt'}\n`;
-    m += `├ Symbol: ${st.orderSymbol} | Qty: ${st.orderQuantity}\n`;
-    m += `├ Subscribers: ${st.subscribers}\n`;
-    m += `├ Poll: mỗi ${st.pollIntervalSec}s\n`;
-    m += `└ Crossover gần nhất: ${st.lastCrossover || 'Chưa có'}\n`;
-
-    if (sig) {
-      m += `\n📡 *Tín hiệu gần nhất:*\n`;
-      m += `├ Thời gian: ${sig.time}\n`;
-      m += `├ Open: ¥${Number(sig.openPrice).toLocaleString()}\n`;
-      if (sig.tp) m += `├ TP: ¥${Number(sig.tp).toLocaleString()}\n`;
-      if (sig.sl) m += `└ SL: ¥${Number(sig.sl).toLocaleString()}\n`;
-    }
-
-    m += '\n*Lệnh:*\n';
-    m += '`/monitor on` — Bật thông báo\n';
-    m += '`/monitor off` — Tắt thông báo\n';
-    m += '`/monitor auto on` — Bật auto-order\n';
-    m += '`/monitor auto off` — Tắt auto-order\n';
-    m += '`/monitor symbol BTCUSDT` — Đổi symbol\n';
-    m += '`/monitor qty 0.001` — Đổi quantity\n';
-
-    bot.sendMessage(chatId, m, { parse_mode: 'Markdown' }).catch(() => bot.sendMessage(chatId, m));
-  }
-
   bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
@@ -611,7 +453,7 @@ module.exports = function startTelegramBot(supabase) {
     if (!text) return;
 
     if (text === '/start') {
-      const welcome = '👋 Xin chào! Tôi là *Nuvion Bot* — trợ lý giao dịch crypto.\n\nBạn có thể hỏi tôi:\n• Số dư tài khoản\n• Giá crypto hiện tại\n• Đặt lệnh mua/bán\n• Xem lịch sử giao dịch\n• Xem/huỷ lệnh đang mở\n\n📊 *MACD Monitor:*\n• `/monitor` — Xem trạng thái monitor\n• `/monitor on` — Bật thông báo MACD crossover\n• `/monitor auto on` — Bật tự động đặt lệnh\n\nGõ `/clear` để xoá lịch sử hội thoại.';
+      const welcome = '👋 Xin chào! Tôi là *Nuvion Bot* — trợ lý giao dịch crypto.\n\nBạn có thể hỏi tôi:\n• Số dư tài khoản\n• Giá crypto hiện tại\n• Đặt lệnh mua/bán\n• Xem lịch sử giao dịch\n• Xem/huỷ lệnh đang mở\n\nGõ `/clear` để xoá lịch sử hội thoại.';
       bot.sendMessage(chatId, welcome, { parse_mode: 'Markdown' });
       return;
     }
@@ -619,11 +461,6 @@ module.exports = function startTelegramBot(supabase) {
     if (text === '/clear') {
       await supabase.from('telegram_messages').delete().eq('chat_id', chatId);
       bot.sendMessage(chatId, '🗑 Đã xoá lịch sử hội thoại.');
-      return;
-    }
-
-    if (text.startsWith('/monitor')) {
-      handleMonitorCommand(chatId, text);
       return;
     }
 
